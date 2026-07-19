@@ -1,0 +1,24 @@
+{
+    // Run/debug flomorphic-api. The env below gives the cgo build the vendored
+    // sqlite3.h it needs for the sqlite-vec extension — the same flag the
+    // Makefile sets. ${workspaceFolder} is expanded by VS Code, so this is
+    // portable across machines as long as you open the flomorphic-api folder
+    // as the workspace root.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run flomorphic-api",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "CGO_ENABLED": "1",
+                "CGO_CFLAGS": "-I${workspaceFolder}/repository/sqlite/cdeps",
+                "PORT": "8025",
+                "DB_SOURCE": "db/flomorphic.db"
+            }
+        }
+    ]
+}

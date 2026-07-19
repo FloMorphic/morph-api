@@ -1,0 +1,15 @@
+{
+    // Give the Go tooling (gopls, build, vet, test) the cgo include path for the
+    // vendored sqlite3.h, so the editor doesn't flag `sqlite3.h: No such file`
+    // in the repository/sqlite package.
+    "go.toolsEnvVars": {
+        "CGO_ENABLED": "1",
+        "CGO_CFLAGS": "-I${workspaceFolder}/repository/sqlite/cdeps"
+    },
+    "gopls": {
+        "build.env": {
+            "CGO_ENABLED": "1",
+            "CGO_CFLAGS": "-I${workspaceFolder}/repository/sqlite/cdeps"
+        }
+    }
+}

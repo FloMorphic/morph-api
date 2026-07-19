@@ -1,0 +1,23 @@
+{
+    // These run the Makefile targets, which already export CGO_ENABLED and
+    // CGO_CFLAGS — so `Terminal → Run Task…` needs no extra env.
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "run",
+            "type": "shell",
+            "command": "make run",
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": [],
+            "group": { "kind": "build", "isDefault": true }
+        },
+        {
+            "label": "build",
+            "type": "shell",
+            "command": "make build",
+            "options": { "cwd": "${workspaceFolder}" },
+            "problemMatcher": ["$go"],
+            "group": "build"
+        }
+    ]
+}

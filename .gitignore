@@ -1,0 +1,14 @@
+# Binaries
+/flomorphic-api
+
+# Local env
+.env
+.env.*
+!.env.example
+
+# SQLite database files (default lives under db/)
+/db/
+*.db
+*.db-wal
+*.db-shm
+__*
