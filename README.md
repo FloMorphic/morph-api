@@ -51,6 +51,24 @@ Every response is wrapped in `{ "data": ..., "error": ... }`.
 | GET    | `/prompt/id/:id` | —                                            |
 | DELETE | `/prompt/id/:id` | —                                            |
 
+### Human Tasks — `HumanTask` (Human-in-the-Loop), page-paginated
+
+Created only by the inflow `hitl` svc handler when a workflow reaches a
+`humanInLoop` node — **there is deliberately no create/upsert route**. `Upsert`
+lives in the repository, not the API.
+
+| Method | Path                     | Notes                                            |
+| ------ | ------------------------ | ------------------------------------------------ |
+| GET    | `/hitl`                  | `?page=1&per_page=12&search=&status=open`        |
+| GET    | `/hitl/id/:id`           | open the task (conversation)                     |
+| POST   | `/hitl/id/:id/answer`    | `{ questionId, answer }` — answers a question    |
+| POST   | `/hitl/id/:id/message`   | `{ role, text }` — appends a chat turn           |
+| POST   | `/hitl/id/:id/close`     | force-finish (workflow ends at this step)        |
+| DELETE | `/hitl/id/:id`           | —                                                |
+
+A task flips `open → answered` once every question has an answer; `close` sets
+`closed`. `status` filter accepts `open` / `answered` / `closed`.
+
 Plus `GET /health`.
 
 **Pagination.** List endpoints are page-based: `?page` (1-based) and `?per_page`
@@ -63,10 +81,10 @@ The count comes straight from SQL, so no cursor bookkeeping is needed.
 app.go                     entrypoint: open store, (optional) inflow, mount routes
 api/                       HTTP controllers — one folder per entity
   init.go                  RegisterAll(app, store)
-  workflow/ context/ memory/ prompt/
+  workflow/ context/ memory/ prompt/ hitl/
 models/                    wire types, kept 1:1 with flomorphic-wapp's src/types/api.ts
 repository/                persistence CONTRACT (interfaces) + driver registry
-  repository.go            Store, {Workflow,Context,Memory,Prompt}Repository, Register/Open
+  repository.go            Store, {Workflow,Context,Memory,Prompt,HumanTask}Repository, Register/Open
   sqlite/                  the sqlite driver (registers itself as "sqlite")
     schema.sql             DDL (source of truth for migrations + sqlc)
     queries/*.sql          sqlc queries

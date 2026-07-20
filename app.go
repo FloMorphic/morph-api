@@ -30,7 +30,7 @@ func main() {
 		fmt.Println("inflow runtime disabled (INFLOW_INFRA_API not set) — serving CRUD only")
 	} else if err := inflow.InitInflowConnection(store); err != nil {
 		fmt.Printf("warning: inflow runtime not connected: %v\n", err)
-	} else if err := inflow.LoadSvcNodehandlers(); err != nil {
+	} else if err := inflow.LoadSvcNodehandlers(store); err != nil {
 		fmt.Printf("warning: inflow service handlers not loaded: %v\n", err)
 	}
 

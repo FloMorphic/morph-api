@@ -14,11 +14,13 @@ import (
 )
 
 // ListParams carries page-based pagination (offset/limit) and an optional
-// search term to the list methods.
+// search term to the list methods. Status is an optional, entity-specific filter
+// (currently used by HumanTasks); empty means "any".
 type ListParams struct {
 	Offset int
 	Limit  int
 	Search string
+	Status string
 }
 
 // WorkflowRepository is CRUD for saved workflows (FlowRecord).
@@ -60,6 +62,27 @@ type PromptRepository interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// HumanTaskRepository is CRUD for Human-in-the-Loop tasks (HumanTask).
+//
+// Upsert is intentionally part of the repository but NOT the REST API: HITL
+// tasks are only ever created/updated by the inflow svc handler when a running
+// workflow reaches a `humanInLoop` node. The API exposes reads, the answer /
+// message / close actions, and delete.
+type HumanTaskRepository interface {
+	Upsert(ctx context.Context, t *models.HumanTask) error
+	GetByID(ctx context.Context, id string) (*models.HumanTask, error)
+	List(ctx context.Context, p ListParams) (items []models.HumanTask, total int64, err error)
+	Delete(ctx context.Context, id string) error
+	// Answer records an answer to a single question, flipping the task to
+	// `answered` once every question has an answer. Returns the updated task.
+	Answer(ctx context.Context, id, questionID, answer string) (*models.HumanTask, error)
+	// AppendMessage adds one turn to the task's chat thread and returns the
+	// updated task.
+	AppendMessage(ctx context.Context, id string, msg models.HumanTaskMessage) (*models.HumanTask, error)
+	// Close force-finishes the task (the workflow terminates at this step).
+	Close(ctx context.Context, id string) (*models.HumanTask, error)
+}
+
 // Store aggregates the per-entity repositories behind one handle and owns the
 // underlying connection lifecycle.
 type Store interface {
@@ -67,6 +90,7 @@ type Store interface {
 	Contexts() ContextRepository
 	Memory() MemoryRepository
 	Prompts() PromptRepository
+	HumanTasks() HumanTaskRepository
 	Close() error
 }
 

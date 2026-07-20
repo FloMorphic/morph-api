@@ -48,7 +48,27 @@ CREATE TABLE IF NOT EXISTS prompts (
     updated_at  INTEGER NOT NULL
 );
 
+-- Human-in-the-Loop tasks. Created by the inflow svc handler when a workflow
+-- reaches a `humanInLoop` node (never via the REST API). `questions` and
+-- `messages` are JSON arrays; `data` is the raw node-data snapshot.
+CREATE TABLE IF NOT EXISTS human_tasks (
+    id         TEXT    PRIMARY KEY,
+    title      TEXT    NOT NULL DEFAULT '',
+    status     TEXT    NOT NULL DEFAULT 'open',
+    pid        TEXT    NOT NULL DEFAULT '',
+    flow_id    TEXT    NOT NULL DEFAULT '',
+    node_id    TEXT    NOT NULL DEFAULT '',
+    context_id TEXT    NOT NULL DEFAULT '',
+    questions  TEXT    NOT NULL DEFAULT '[]',
+    messages   TEXT    NOT NULL DEFAULT '[]',
+    data       TEXT    NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    closed_at  INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_workflows_updated_at ON workflows (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_contexts_updated_at ON contexts (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_updated_at ON memory_stores (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_prompts_updated_at ON prompts (updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_human_tasks_updated_at ON human_tasks (updated_at DESC, id DESC);

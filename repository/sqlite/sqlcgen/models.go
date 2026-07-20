@@ -19,6 +19,22 @@ type Context struct {
 	UpdatedAt        int64
 }
 
+type HumanTask struct {
+	ID        string
+	Title     string
+	Status    string
+	Pid       string
+	FlowID    string
+	NodeID    string
+	ContextID string
+	Questions string
+	Messages  string
+	Data      string
+	CreatedAt int64
+	UpdatedAt int64
+	ClosedAt  int64
+}
+
 type MemoryStore struct {
 	ID             string
 	Name           string

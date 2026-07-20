@@ -37,6 +37,7 @@ const (
 	NODE_CODE     = "code"
 	NODE_EXT_SVC  = "extrinsic"
 	NODE_GOTO     = "goto"
+	NODE_HITL     = "humanInLoop"
 
 	// Extensions
 	NODE_MY_A = "my_a_ext"
@@ -198,6 +199,27 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 		}
 
 		node.Plugin = &pluginNode.PluginRule
+	case NODE_HITL:
+		// Human-in-the-Loop → an extrinsic call to this backend's `hitl` svc.
+		// The subject carries the nodeId so the handler can recover it; the
+		// Data payload carries the title/questions to record on the task.
+		node.Type = inflowModels.ExtrinsicNodeType
+		subj := svcHandler.GetSvc(SvcHitl)
+		if subj == "" {
+			subj = svcHandler.SvcTopic(HitlSubject)
+		}
+		concrete := subj.MakeReqSubjectWithParams(map[string]any{"nodeId": vfn.ID})
+		evNode := inflowNodes.NewExtrinsicSvcNode(concrete)
+		evNode.ExtrinsicRule.ReqTimeoutSecound = 255
+		payload := map[string]any{"nodeId": vfn.ID}
+		if nodeData["title"] != nil {
+			payload["title"] = nodeData["title"]
+		}
+		if nodeData["questions"] != nil {
+			payload["questions"] = nodeData["questions"]
+		}
+		evNode.ExtrinsicRule.Data = payload
+		node.Extrinsic = &evNode.ExtrinsicRule
 	case NODE_VOID:
 		node.Type = inflowModels.VoidNodeType
 
