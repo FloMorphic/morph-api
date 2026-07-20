@@ -18,6 +18,8 @@ const (
 	PromptIDPrefix      = "prompt"
 	HumanTaskIDPrefix   = "hitl"
 	NodeSettingIDPrefix = "nset"
+	// Processes have no string id prefix — their identity is an auto-increment
+	// integer index_id (see models.Process.IndexID).
 )
 
 // NewID returns a short, time-ordered, URL-safe id of the form

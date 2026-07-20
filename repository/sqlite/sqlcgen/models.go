@@ -56,6 +56,25 @@ type NodeSetting struct {
 	UpdatedAt  int64
 }
 
+type Process struct {
+	IndexID     int64
+	Pid         string
+	FlowID      string
+	ContextID   string
+	StartNodeID string
+	Status      string
+	ResourceUrl string
+	Request     string
+	Meta        string
+	Error       string
+	ScheduledAt int64
+	StartedAt   int64
+	FinishedAt  int64
+	DurationMs  int64
+	CreatedAt   int64
+	UpdatedAt   int64
+}
+
 type Prompt struct {
 	ID          string
 	Title       string

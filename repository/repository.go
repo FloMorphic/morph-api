@@ -24,6 +24,13 @@ type ListParams struct {
 	// NodeUniqID is an optional filter used by NodeSettings to scope a list to
 	// the profiles of one node (its kind / plugin identity); empty means "any".
 	NodeUniqID string
+	// PID is an optional filter used by Processes to scope a list to the rows of
+	// one engine process uuid; empty means "any".
+	PID string
+	// FlowID is an optional filter used by Processes to scope a list to the runs
+	// of one workflow (e.g. the running processes shown while editing it); empty
+	// means "any".
+	FlowID string
 }
 
 // WorkflowRepository is CRUD for saved workflows (FlowRecord).
@@ -96,6 +103,30 @@ type NodeSettingRepository interface {
 	Delete(ctx context.Context, id string) error
 }
 
+// ProcessRepository is CRUD for process runs (Process). Rows are written by the
+// inflow layer when a process request is sent and closed out from the engine's
+// proc.finish event, so the API exposes a launch action, reads and delete rather
+// than a plain create.
+//
+// Create and Update are split (rather than a single Upsert) because identity is
+// an auto-increment integer: a launch must Create the row to learn its indexId,
+// echo that index into the ProcessRequest meta, then Update the row with the
+// request before dispatching.
+type ProcessRepository interface {
+	// Create inserts a new run and populates p.IndexID with the assigned index.
+	Create(ctx context.Context, p *models.Process) error
+	// Update writes an existing run, keyed by p.IndexID.
+	Update(ctx context.Context, p *models.Process) error
+	GetByIndex(ctx context.Context, indexID int64) (*models.Process, error)
+	List(ctx context.Context, params ListParams) (items []models.Process, total int64, err error)
+	Delete(ctx context.Context, indexID int64) error
+	// GetRunningByPID returns the single `running` row for an engine process
+	// uuid, newest-first, or ErrNotFound when none is running. It is how a
+	// proc.finish event (which carries only the pid) resolves the exact row to
+	// close, since only one row per pid is ever `running` at a time.
+	GetRunningByPID(ctx context.Context, pid string) (*models.Process, error)
+}
+
 // Store aggregates the per-entity repositories behind one handle and owns the
 // underlying connection lifecycle.
 type Store interface {
@@ -105,6 +136,7 @@ type Store interface {
 	Prompts() PromptRepository
 	HumanTasks() HumanTaskRepository
 	NodeSettings() NodeSettingRepository
+	Processes() ProcessRepository
 	Close() error
 }
 

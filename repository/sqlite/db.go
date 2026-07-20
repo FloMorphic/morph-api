@@ -40,6 +40,7 @@ type store struct {
 	prompts      *promptRepo
 	humanTasks   *humanTaskRepo
 	nodeSettings *nodeSettingRepo
+	processes    *processRepo
 }
 
 // Open connects to the sqlite database at source (a file path for sqlite),
@@ -80,6 +81,7 @@ func Open(source string) (repository.Store, error) {
 		prompts:      &promptRepo{q: q},
 		humanTasks:   &humanTaskRepo{q: q},
 		nodeSettings: &nodeSettingRepo{q: q},
+		processes:    &processRepo{q: q},
 	}, nil
 }
 
@@ -89,6 +91,7 @@ func (s *store) Memory() repository.MemoryRepository            { return s.memor
 func (s *store) Prompts() repository.PromptRepository           { return s.prompts }
 func (s *store) HumanTasks() repository.HumanTaskRepository     { return s.humanTasks }
 func (s *store) NodeSettings() repository.NodeSettingRepository { return s.nodeSettings }
+func (s *store) Processes() repository.ProcessRepository        { return s.processes }
 func (s *store) Close() error                                   { return s.db.Close() }
 
 // ensureDBDir creates the parent directory of a file-backed sqlite database if

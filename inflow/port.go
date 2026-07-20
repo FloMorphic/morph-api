@@ -59,6 +59,12 @@ func LoadSvcNodehandlers(store repository.Store) error {
 		return fmt.Errorf("failed to create hitl service node : %v", err)
 	}
 	fmt.Println("New SVC handler registered On  ", svcHandler.SvcTopic(HitlSubject).ConvertToSubscribe())
+
+	// Subscribe to the engine's event log so finished runs close their process
+	// rows. Non-fatal: the CRUD + launch paths keep working without it.
+	if err := SubscribeProcessEvents(store); err != nil {
+		fmt.Printf("warning: process events not subscribed: %v\n", err)
+	}
 	return nil
 }
 

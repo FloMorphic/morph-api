@@ -82,6 +82,40 @@ CREATE TABLE IF NOT EXISTS node_settings (
     updated_at   INTEGER NOT NULL
 );
 
+-- Process runs. One row per workflow execution launched on the inflow engine.
+-- Created (upserted) by the inflow layer when a process request is sent — never
+-- via a plain REST create — and closed out from the engine's `inflow.event.log`
+-- proc.finish event. `request` is the ProcessRequest snapshot sent to the engine
+-- and `meta` is a free-form object (e.g. the next-node list captured when a
+-- human-in-the-loop node parks the run, so the resume request can rebuild a
+-- virtual start node from it).
+--
+-- `index_id` is the *indexId*: an auto-increment integer that is the row's
+-- identity and is echoed into the ProcessRequest meta (and so travels as a
+-- header on the services a run calls), addressing a run independently of its
+-- `pid`. A single `pid` can back several rows over its lifetime — a
+-- human-in-the-loop pause finishes one row as `waiting`, and the human's answer
+-- starts a fresh row that resumes the same `pid` — so `pid` alone does not
+-- identify a row; the index does.
+CREATE TABLE IF NOT EXISTS processes (
+    index_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    pid           TEXT    NOT NULL DEFAULT '',
+    flow_id       TEXT    NOT NULL DEFAULT '',
+    context_id    TEXT    NOT NULL DEFAULT '',
+    start_node_id TEXT    NOT NULL DEFAULT '',
+    status        TEXT    NOT NULL DEFAULT 'running',
+    resource_url  TEXT    NOT NULL DEFAULT '',
+    request       TEXT    NOT NULL DEFAULT '{}',
+    meta          TEXT    NOT NULL DEFAULT '{}',
+    error         TEXT    NOT NULL DEFAULT '',
+    scheduled_at  INTEGER NOT NULL DEFAULT 0,
+    started_at    INTEGER NOT NULL DEFAULT 0,
+    finished_at   INTEGER NOT NULL DEFAULT 0,
+    duration_ms   INTEGER NOT NULL DEFAULT 0,
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_workflows_updated_at ON workflows (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_contexts_updated_at ON contexts (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_updated_at ON memory_stores (updated_at DESC, id DESC);
@@ -89,3 +123,5 @@ CREATE INDEX IF NOT EXISTS idx_prompts_updated_at ON prompts (updated_at DESC, i
 CREATE INDEX IF NOT EXISTS idx_human_tasks_updated_at ON human_tasks (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_node_settings_updated_at ON node_settings (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_node_settings_node ON node_settings (node_uniq_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_processes_updated_at ON processes (updated_at DESC, index_id DESC);
+CREATE INDEX IF NOT EXISTS idx_processes_pid ON processes (pid, status);
