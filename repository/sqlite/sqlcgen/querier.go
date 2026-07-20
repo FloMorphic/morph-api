@@ -11,6 +11,7 @@ import (
 
 type Querier interface {
 	CountContexts(ctx context.Context, search interface{}) (int64, error)
+	CountExtensions(ctx context.Context, arg CountExtensionsParams) (int64, error)
 	CountHumanTasks(ctx context.Context, arg CountHumanTasksParams) (int64, error)
 	CountNodeSettings(ctx context.Context, arg CountNodeSettingsParams) (int64, error)
 	CountProcesses(ctx context.Context, arg CountProcessesParams) (int64, error)
@@ -18,13 +19,16 @@ type Querier interface {
 	CountWorkflows(ctx context.Context, search interface{}) (int64, error)
 	CreateMemoryStore(ctx context.Context, arg CreateMemoryStoreParams) error
 	DeleteContext(ctx context.Context, id string) (int64, error)
+	DeleteExtension(ctx context.Context, id string) (int64, error)
 	DeleteHumanTask(ctx context.Context, id string) (int64, error)
 	DeleteMemoryStore(ctx context.Context, id string) (int64, error)
 	DeleteNodeSetting(ctx context.Context, id string) (int64, error)
 	DeleteProcess(ctx context.Context, indexID int64) (int64, error)
 	DeletePrompt(ctx context.Context, id string) (int64, error)
 	DeleteWorkflow(ctx context.Context, id string) (int64, error)
+	GetBuiltinByName(ctx context.Context, name string) (Extension, error)
 	GetContext(ctx context.Context, id string) (Context, error)
+	GetExtension(ctx context.Context, id string) (Extension, error)
 	GetHumanTask(ctx context.Context, id string) (HumanTask, error)
 	GetMemoryStore(ctx context.Context, id string) (MemoryStore, error)
 	GetNodeSetting(ctx context.Context, id string) (NodeSetting, error)
@@ -34,6 +38,7 @@ type Querier interface {
 	GetWorkflow(ctx context.Context, id string) (Workflow, error)
 	InsertProcess(ctx context.Context, arg InsertProcessParams) (sql.Result, error)
 	ListContexts(ctx context.Context, arg ListContextsParams) ([]Context, error)
+	ListExtensions(ctx context.Context, arg ListExtensionsParams) ([]Extension, error)
 	ListHumanTasks(ctx context.Context, arg ListHumanTasksParams) ([]HumanTask, error)
 	ListMemoryStores(ctx context.Context) ([]MemoryStore, error)
 	ListNodeSettings(ctx context.Context, arg ListNodeSettingsParams) ([]NodeSetting, error)
@@ -42,6 +47,7 @@ type Querier interface {
 	ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]Workflow, error)
 	UpdateProcess(ctx context.Context, arg UpdateProcessParams) (int64, error)
 	UpsertContext(ctx context.Context, arg UpsertContextParams) error
+	UpsertExtension(ctx context.Context, arg UpsertExtensionParams) error
 	UpsertHumanTask(ctx context.Context, arg UpsertHumanTaskParams) error
 	UpsertNodeSetting(ctx context.Context, arg UpsertNodeSettingParams) error
 	UpsertPrompt(ctx context.Context, arg UpsertPromptParams) error

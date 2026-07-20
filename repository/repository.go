@@ -31,6 +31,10 @@ type ListParams struct {
 	// of one workflow (e.g. the running processes shown while editing it); empty
 	// means "any".
 	FlowID string
+	// Kind is an optional filter used by Extensions to scope a list to one
+	// origin ("builtin" or "extension"); empty means "any". The admin settings
+	// panel lists builtins; the extension portal lists extensions.
+	Kind string
 }
 
 // WorkflowRepository is CRUD for saved workflows (FlowRecord).
@@ -127,6 +131,24 @@ type ProcessRepository interface {
 	GetRunningByPID(ctx context.Context, pid string) (*models.Process, error)
 }
 
+// ExtensionRepository is CRUD for palette extensions (ExtensionRecord) — the
+// node palette. The list accepts an optional Kind filter (via ListParams) so the
+// admin settings panel and the extension portal can each scope to their origin.
+//
+// Builtins are additionally seeded on first run; SeedBuiltins upserts a set of
+// builtin definitions idempotently (keyed by name), leaving existing rows and
+// admin edits untouched.
+type ExtensionRepository interface {
+	Upsert(ctx context.Context, e *models.ExtensionRecord) error
+	GetByID(ctx context.Context, id string) (*models.ExtensionRecord, error)
+	List(ctx context.Context, p ListParams) (items []models.ExtensionRecord, total int64, err error)
+	Delete(ctx context.Context, id string) error
+	// SeedBuiltins inserts any builtin in defs that is not already present
+	// (matched by name). It never overwrites an existing builtin, so admin edits
+	// survive restarts. Returns the number of rows inserted.
+	SeedBuiltins(ctx context.Context, defs []models.ExtensionRecord) (int, error)
+}
+
 // Store aggregates the per-entity repositories behind one handle and owns the
 // underlying connection lifecycle.
 type Store interface {
@@ -137,6 +159,7 @@ type Store interface {
 	HumanTasks() HumanTaskRepository
 	NodeSettings() NodeSettingRepository
 	Processes() ProcessRepository
+	Extensions() ExtensionRepository
 	Close() error
 }
 

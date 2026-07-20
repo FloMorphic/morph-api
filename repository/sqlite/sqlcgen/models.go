@@ -19,6 +19,20 @@ type Context struct {
 	UpdatedAt        int64
 }
 
+type Extension struct {
+	ID          string
+	Kind        string
+	Type        string
+	Name        string
+	Description string
+	PluginID    string
+	Icon        string
+	Params      string
+	BindTo      string
+	CreatedAt   int64
+	UpdatedAt   int64
+}
+
 type HumanTask struct {
 	ID        string
 	Title     string

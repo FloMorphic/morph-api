@@ -116,6 +116,28 @@ CREATE TABLE IF NOT EXISTS processes (
     updated_at    INTEGER NOT NULL
 );
 
+-- Palette extensions. Every row is one node in the canvas palette. `kind`
+-- separates admin-managed builtins (seeded on first run; UI hard-coded in the
+-- front end) from user-imported inflowv1 plugins (`extension`, whose settings
+-- form and actions are fetched live over NATS via `plugin_id`). `type` is the
+-- generic inflow/palette node type it compiles to. `icon`, `params` (JSON-schema
+-- form) and `bind_to` (extrinsic topic + values) are JSON objects. Managed
+-- through the REST API (full CRUD); builtins are additionally seeded idempotently
+-- by name.
+CREATE TABLE IF NOT EXISTS extensions (
+    id          TEXT    PRIMARY KEY,
+    kind        TEXT    NOT NULL DEFAULT 'extension',
+    type        TEXT    NOT NULL DEFAULT 'plugin',
+    name        TEXT    NOT NULL DEFAULT '',
+    description TEXT    NOT NULL DEFAULT '',
+    plugin_id   TEXT    NOT NULL DEFAULT '',
+    icon        TEXT    NOT NULL DEFAULT '{}',
+    params      TEXT    NOT NULL DEFAULT '{}',
+    bind_to     TEXT    NOT NULL DEFAULT '{}',
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_workflows_updated_at ON workflows (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_contexts_updated_at ON contexts (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_updated_at ON memory_stores (updated_at DESC, id DESC);
@@ -125,3 +147,6 @@ CREATE INDEX IF NOT EXISTS idx_node_settings_updated_at ON node_settings (update
 CREATE INDEX IF NOT EXISTS idx_node_settings_node ON node_settings (node_uniq_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_processes_updated_at ON processes (updated_at DESC, index_id DESC);
 CREATE INDEX IF NOT EXISTS idx_processes_pid ON processes (pid, status);
+CREATE INDEX IF NOT EXISTS idx_extensions_updated_at ON extensions (updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_extensions_kind ON extensions (kind, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_extensions_builtin_name ON extensions (kind, name);

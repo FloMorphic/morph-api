@@ -5,6 +5,7 @@ package api
 
 import (
 	contextControllers "github.com/FloMorphic/morph-api/api/context"
+	extensionControllers "github.com/FloMorphic/morph-api/api/extension"
 	hitlControllers "github.com/FloMorphic/morph-api/api/hitl"
 	memoryControllers "github.com/FloMorphic/morph-api/api/memory"
 	processControllers "github.com/FloMorphic/morph-api/api/process"
@@ -46,4 +47,5 @@ func RegisterAll(app fiber.Router, store repository.Store) {
 	hitlControllers.Register(app, store)
 	settingsControllers.Register(app, store)
 	processControllers.Register(app, store)
+	extensionControllers.Register(app, store)
 }

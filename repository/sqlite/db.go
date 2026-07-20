@@ -14,14 +14,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
 	"github.com/FloMorphic/morph-api/repository/sqlite/sqlcgen"
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
+	"github.com/bytedance/sonic"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 //go:embed schema.sql
 var schemaSQL string
+
+//go:embed seed/builtins.json
+var builtinsSeed []byte
 
 const driverName = "sqlite"
 
@@ -41,6 +46,7 @@ type store struct {
 	humanTasks   *humanTaskRepo
 	nodeSettings *nodeSettingRepo
 	processes    *processRepo
+	extensions   *extensionRepo
 }
 
 // Open connects to the sqlite database at source (a file path for sqlite),
@@ -73,7 +79,7 @@ func Open(source string) (repository.Store, error) {
 	fmt.Printf("sqlite ready (%s), sqlite-vec %s\n", source, vecVersion)
 
 	q := sqlcgen.New(db)
-	return &store{
+	s := &store{
 		db:           db,
 		workflows:    &workflowRepo{q: q},
 		contexts:     &contextRepo{q: q},
@@ -82,7 +88,32 @@ func Open(source string) (repository.Store, error) {
 		humanTasks:   &humanTaskRepo{q: q},
 		nodeSettings: &nodeSettingRepo{q: q},
 		processes:    &processRepo{q: q},
-	}, nil
+		extensions:   &extensionRepo{q: q},
+	}
+
+	// Seed builtin palette nodes on first run (idempotent, keyed by name). A
+	// bad/empty seed file must not stop the server from serving CRUD.
+	if defs, err := decodeBuiltinsSeed(); err != nil {
+		fmt.Printf("warning: builtins seed not applied: %v\n", err)
+	} else if n, err := s.extensions.SeedBuiltins(context.Background(), defs); err != nil {
+		fmt.Printf("warning: builtins seed not applied: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("seeded %d builtin node(s)\n", n)
+	}
+
+	return s, nil
+}
+
+// decodeBuiltinsSeed parses the embedded builtins seed into records.
+func decodeBuiltinsSeed() ([]models.ExtensionRecord, error) {
+	var defs []models.ExtensionRecord
+	if len(builtinsSeed) == 0 {
+		return defs, nil
+	}
+	if err := sonic.Unmarshal(builtinsSeed, &defs); err != nil {
+		return nil, fmt.Errorf("decode builtins seed: %w", err)
+	}
+	return defs, nil
 }
 
 func (s *store) Workflows() repository.WorkflowRepository       { return s.workflows }
@@ -92,6 +123,7 @@ func (s *store) Prompts() repository.PromptRepository           { return s.promp
 func (s *store) HumanTasks() repository.HumanTaskRepository     { return s.humanTasks }
 func (s *store) NodeSettings() repository.NodeSettingRepository { return s.nodeSettings }
 func (s *store) Processes() repository.ProcessRepository        { return s.processes }
+func (s *store) Extensions() repository.ExtensionRepository      { return s.extensions }
 func (s *store) Close() error                                   { return s.db.Close() }
 
 // ensureDBDir creates the parent directory of a file-backed sqlite database if

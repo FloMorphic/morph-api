@@ -1,0 +1,65 @@
+[
+  {
+    "kind": "builtin",
+    "type": "startNode",
+    "name": "Start",
+    "description": "Entry point of a workflow. Every flow requires exactly one.",
+    "icon": { "class": "lucide", "name": "play", "meta": {} },
+    "params": { "schema": {}, "ui": {} },
+    "bindTo": { "topic_key": "", "values": {} }
+  },
+  {
+    "kind": "builtin",
+    "type": "pluginNative",
+    "name": "PluginNative",
+    "description": "Call a native inflowv1 plugin over the ecosystem bus.",
+    "icon": { "class": "lucide", "name": "puzzle", "meta": {} },
+    "params": { "schema": {}, "ui": {} },
+    "bindTo": { "topic_key": "", "values": {} }
+  },
+  {
+    "kind": "builtin",
+    "type": "code",
+    "name": "Code",
+    "description": "Run a code step (JavaScript or OPA/Rego) against the flow scope.",
+    "icon": { "class": "lucide", "name": "code", "meta": {} },
+    "params": { "schema": {}, "ui": {} },
+    "bindTo": { "topic_key": "", "values": {} }
+  },
+  {
+    "kind": "builtin",
+    "type": "contract",
+    "name": "Contract",
+    "description": "Branch on a rule/contract evaluated over the flow scope.",
+    "icon": { "class": "lucide", "name": "file-text", "meta": {} },
+    "params": { "schema": {}, "ui": {} },
+    "bindTo": { "topic_key": "", "values": {} }
+  },
+  {
+    "kind": "builtin",
+    "type": "extrinsic",
+    "name": "Extrinsics",
+    "description": "Call a backend-registered extrinsic service by subject.",
+    "icon": { "class": "lucide", "name": "globe", "meta": {} },
+    "params": { "schema": {}, "ui": {} },
+    "bindTo": { "topic_key": "", "values": {} }
+  },
+  {
+    "kind": "builtin",
+    "type": "goto",
+    "name": "Goto",
+    "description": "Jump to a node in another (or the same) workflow.",
+    "icon": { "class": "lucide", "name": "corner-up-right", "meta": {} },
+    "params": { "schema": {}, "ui": {} },
+    "bindTo": { "topic_key": "", "values": {} }
+  },
+  {
+    "kind": "builtin",
+    "type": "void",
+    "name": "Void",
+    "description": "A pass-through / no-op node.",
+    "icon": { "class": "lucide", "name": "circle", "meta": {} },
+    "params": { "schema": {}, "ui": {} },
+    "bindTo": { "topic_key": "", "values": {} }
+  }
+]
