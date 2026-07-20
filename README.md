@@ -69,6 +69,25 @@ lives in the repository, not the API.
 A task flips `open → answered` once every question has an answer; `close` sets
 `closed`. `status` filter accepts `open` / `answered` / `closed`.
 
+### Node settings — `NodeSetting` (settings profiles), page-paginated
+
+A reusable, named key/value config bound to a node — identified by `nodeUniqId`,
+the node kind / plugin identity shared by every instance of that node. A node may
+own several profiles (e.g. a distinct URL + token per environment); a canvas node
+instance references one by id. `settings` is a free-form JSON object. `nodeType`
+records the node's kind (e.g. `llm`, `plugin`) — set by the frontend, not the
+user — so a profile carries what kind of node it belongs to.
+
+| Method | Path               | Notes                                              |
+| ------ | ------------------ | -------------------------------------------------- |
+| POST   | `/settings`        | `NodeSetting` (no `id` ⇒ create); `nodeUniqId` req |
+| GET    | `/settings`        | `?page=1&per_page=12&search=&node=<nodeUniqId>`    |
+| GET    | `/settings/id/:id` | —                                                  |
+| DELETE | `/settings/id/:id` | —                                                  |
+
+The `node` query filter scopes the list to one node's profiles (used by the node
+drawer's profile selector).
+
 Plus `GET /health`.
 
 **Pagination.** List endpoints are page-based: `?page` (1-based) and `?per_page`
@@ -81,7 +100,7 @@ The count comes straight from SQL, so no cursor bookkeeping is needed.
 app.go                     entrypoint: open store, (optional) inflow, mount routes
 api/                       HTTP controllers — one folder per entity
   init.go                  RegisterAll(app, store)
-  workflow/ context/ memory/ prompt/ hitl/
+  workflow/ context/ memory/ prompt/ hitl/ settings/
 models/                    wire types, kept 1:1 with flomorphic-wapp's src/types/api.ts
 repository/                persistence CONTRACT (interfaces) + driver registry
   repository.go            Store, {Workflow,Context,Memory,Prompt,HumanTask}Repository, Register/Open

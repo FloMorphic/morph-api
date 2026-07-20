@@ -12,11 +12,12 @@ import (
 // (src/lib/id.ts uses `<prefix>_<...>`), so ids are interchangeable between the
 // standalone/local mode and this backend.
 const (
-	WorkflowIDPrefix  = "flow"
-	ContextIDPrefix   = "ctx"
-	MemoryIDPrefix    = "mem"
-	PromptIDPrefix    = "prompt"
-	HumanTaskIDPrefix = "hitl"
+	WorkflowIDPrefix    = "flow"
+	ContextIDPrefix     = "ctx"
+	MemoryIDPrefix      = "mem"
+	PromptIDPrefix      = "prompt"
+	HumanTaskIDPrefix   = "hitl"
+	NodeSettingIDPrefix = "nset"
 )
 
 // NewID returns a short, time-ordered, URL-safe id of the form

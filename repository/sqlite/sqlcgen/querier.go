@@ -11,26 +11,31 @@ import (
 type Querier interface {
 	CountContexts(ctx context.Context, search interface{}) (int64, error)
 	CountHumanTasks(ctx context.Context, arg CountHumanTasksParams) (int64, error)
+	CountNodeSettings(ctx context.Context, arg CountNodeSettingsParams) (int64, error)
 	CountPrompts(ctx context.Context, search interface{}) (int64, error)
 	CountWorkflows(ctx context.Context, search interface{}) (int64, error)
 	CreateMemoryStore(ctx context.Context, arg CreateMemoryStoreParams) error
 	DeleteContext(ctx context.Context, id string) (int64, error)
 	DeleteHumanTask(ctx context.Context, id string) (int64, error)
 	DeleteMemoryStore(ctx context.Context, id string) (int64, error)
+	DeleteNodeSetting(ctx context.Context, id string) (int64, error)
 	DeletePrompt(ctx context.Context, id string) (int64, error)
 	DeleteWorkflow(ctx context.Context, id string) (int64, error)
 	GetContext(ctx context.Context, id string) (Context, error)
 	GetHumanTask(ctx context.Context, id string) (HumanTask, error)
 	GetMemoryStore(ctx context.Context, id string) (MemoryStore, error)
+	GetNodeSetting(ctx context.Context, id string) (NodeSetting, error)
 	GetPrompt(ctx context.Context, id string) (Prompt, error)
 	GetWorkflow(ctx context.Context, id string) (Workflow, error)
 	ListContexts(ctx context.Context, arg ListContextsParams) ([]Context, error)
 	ListHumanTasks(ctx context.Context, arg ListHumanTasksParams) ([]HumanTask, error)
 	ListMemoryStores(ctx context.Context) ([]MemoryStore, error)
+	ListNodeSettings(ctx context.Context, arg ListNodeSettingsParams) ([]NodeSetting, error)
 	ListPrompts(ctx context.Context, arg ListPromptsParams) ([]Prompt, error)
 	ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]Workflow, error)
 	UpsertContext(ctx context.Context, arg UpsertContextParams) error
 	UpsertHumanTask(ctx context.Context, arg UpsertHumanTaskParams) error
+	UpsertNodeSetting(ctx context.Context, arg UpsertNodeSettingParams) error
 	UpsertPrompt(ctx context.Context, arg UpsertPromptParams) error
 	UpsertWorkflow(ctx context.Context, arg UpsertWorkflowParams) error
 }

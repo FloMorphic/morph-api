@@ -33,12 +33,13 @@ func init() {
 
 // store implements repository.Store over a single *sql.DB.
 type store struct {
-	db         *sql.DB
-	workflows  *workflowRepo
-	contexts   *contextRepo
-	memory     *memoryRepo
-	prompts    *promptRepo
-	humanTasks *humanTaskRepo
+	db           *sql.DB
+	workflows    *workflowRepo
+	contexts     *contextRepo
+	memory       *memoryRepo
+	prompts      *promptRepo
+	humanTasks   *humanTaskRepo
+	nodeSettings *nodeSettingRepo
 }
 
 // Open connects to the sqlite database at source (a file path for sqlite),
@@ -72,21 +73,23 @@ func Open(source string) (repository.Store, error) {
 
 	q := sqlcgen.New(db)
 	return &store{
-		db:         db,
-		workflows:  &workflowRepo{q: q},
-		contexts:   &contextRepo{q: q},
-		memory:     &memoryRepo{db: db, q: q},
-		prompts:    &promptRepo{q: q},
-		humanTasks: &humanTaskRepo{q: q},
+		db:           db,
+		workflows:    &workflowRepo{q: q},
+		contexts:     &contextRepo{q: q},
+		memory:       &memoryRepo{db: db, q: q},
+		prompts:      &promptRepo{q: q},
+		humanTasks:   &humanTaskRepo{q: q},
+		nodeSettings: &nodeSettingRepo{q: q},
 	}, nil
 }
 
-func (s *store) Workflows() repository.WorkflowRepository   { return s.workflows }
-func (s *store) Contexts() repository.ContextRepository     { return s.contexts }
-func (s *store) Memory() repository.MemoryRepository        { return s.memory }
-func (s *store) Prompts() repository.PromptRepository       { return s.prompts }
-func (s *store) HumanTasks() repository.HumanTaskRepository { return s.humanTasks }
-func (s *store) Close() error                               { return s.db.Close() }
+func (s *store) Workflows() repository.WorkflowRepository       { return s.workflows }
+func (s *store) Contexts() repository.ContextRepository         { return s.contexts }
+func (s *store) Memory() repository.MemoryRepository            { return s.memory }
+func (s *store) Prompts() repository.PromptRepository           { return s.prompts }
+func (s *store) HumanTasks() repository.HumanTaskRepository     { return s.humanTasks }
+func (s *store) NodeSettings() repository.NodeSettingRepository { return s.nodeSettings }
+func (s *store) Close() error                                   { return s.db.Close() }
 
 // ensureDBDir creates the parent directory of a file-backed sqlite database if
 // it is missing (sqlite errors rather than creating it). No-op for in-memory

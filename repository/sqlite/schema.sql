@@ -67,8 +67,25 @@ CREATE TABLE IF NOT EXISTS human_tasks (
     closed_at  INTEGER NOT NULL DEFAULT 0
 );
 
+-- Node settings profiles. A reusable, named bag of key/value config bound to a
+-- node (identified by `node_uniq_id` — the node kind/plugin identity, shared by
+-- every instance of that node). A node may have several profiles (e.g. one URL +
+-- token per environment); a canvas node instance selects one by id. `settings`
+-- is a free-form JSON object. Managed through the REST API (full CRUD).
+CREATE TABLE IF NOT EXISTS node_settings (
+    id           TEXT    PRIMARY KEY,
+    node_uniq_id TEXT    NOT NULL DEFAULT '',
+    node_type    TEXT    NOT NULL DEFAULT '',
+    title        TEXT    NOT NULL DEFAULT '',
+    settings     TEXT    NOT NULL DEFAULT '{}',
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_workflows_updated_at ON workflows (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_contexts_updated_at ON contexts (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_updated_at ON memory_stores (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_prompts_updated_at ON prompts (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_human_tasks_updated_at ON human_tasks (updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_node_settings_updated_at ON node_settings (updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_node_settings_node ON node_settings (node_uniq_id, updated_at DESC);

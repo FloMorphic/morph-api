@@ -8,6 +8,7 @@ import (
 	hitlControllers "github.com/FloMorphic/morph-api/api/hitl"
 	memoryControllers "github.com/FloMorphic/morph-api/api/memory"
 	promptControllers "github.com/FloMorphic/morph-api/api/prompt"
+	settingsControllers "github.com/FloMorphic/morph-api/api/settings"
 	workflowControllers "github.com/FloMorphic/morph-api/api/workflow"
 	"github.com/FloMorphic/morph-api/env"
 	"github.com/FloMorphic/morph-api/etc"
@@ -42,4 +43,5 @@ func RegisterAll(app fiber.Router, store repository.Store) {
 	memoryControllers.Register(app, store)
 	promptControllers.Register(app, store)
 	hitlControllers.Register(app, store)
+	settingsControllers.Register(app, store)
 }

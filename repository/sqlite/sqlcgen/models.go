@@ -46,6 +46,16 @@ type MemoryStore struct {
 	UpdatedAt      int64
 }
 
+type NodeSetting struct {
+	ID         string
+	NodeUniqID string
+	NodeType   string
+	Title      string
+	Settings   string
+	CreatedAt  int64
+	UpdatedAt  int64
+}
+
 type Prompt struct {
 	ID          string
 	Title       string

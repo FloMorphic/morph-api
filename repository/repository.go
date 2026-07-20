@@ -21,6 +21,9 @@ type ListParams struct {
 	Limit  int
 	Search string
 	Status string
+	// NodeUniqID is an optional filter used by NodeSettings to scope a list to
+	// the profiles of one node (its kind / plugin identity); empty means "any".
+	NodeUniqID string
 }
 
 // WorkflowRepository is CRUD for saved workflows (FlowRecord).
@@ -83,6 +86,16 @@ type HumanTaskRepository interface {
 	Close(ctx context.Context, id string) (*models.HumanTask, error)
 }
 
+// NodeSettingRepository is CRUD for node settings profiles (NodeSetting). The
+// list accepts an optional NodeUniqID filter (via ListParams) so the node drawer
+// can fetch just that node's profiles.
+type NodeSettingRepository interface {
+	Upsert(ctx context.Context, s *models.NodeSetting) error
+	GetByID(ctx context.Context, id string) (*models.NodeSetting, error)
+	List(ctx context.Context, p ListParams) (items []models.NodeSetting, total int64, err error)
+	Delete(ctx context.Context, id string) error
+}
+
 // Store aggregates the per-entity repositories behind one handle and owns the
 // underlying connection lifecycle.
 type Store interface {
@@ -91,6 +104,7 @@ type Store interface {
 	Memory() MemoryRepository
 	Prompts() PromptRepository
 	HumanTasks() HumanTaskRepository
+	NodeSettings() NodeSettingRepository
 	Close() error
 }
 
