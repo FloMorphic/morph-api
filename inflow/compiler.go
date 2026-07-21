@@ -2,6 +2,7 @@ package inflow
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/FloMorphic/morph-api/models"
 	compiler "github.com/Inflowenger/inflow-fusion/compilers/vueFlow"
@@ -125,6 +126,58 @@ func getStr(data map[string]any, key string) string {
 		return v
 	}
 	return ""
+}
+
+// getFloat reads a numeric field defensively. JSON-decoded node data carries
+// numbers as float64; a string is parsed as a fallback (empty/other type → 0).
+func getFloat(data map[string]any, key string) float64 {
+	switch v := data[key].(type) {
+	case float64:
+		return v
+	case int64:
+		return float64(v)
+	case int:
+		return float64(v)
+	case string:
+		var f float64
+		if _, err := fmt.Sscanf(v, "%g", &f); err == nil {
+			return f
+		}
+	}
+	return 0
+}
+
+// delayModeSeconds maps a Continue After delay unit to seconds. An unknown mode
+// (including the "at" absolute mode and legacy "delay") returns 0.
+func delayModeSeconds(mode string) int64 {
+	switch mode {
+	case "seconds":
+		return 1
+	case "minutes":
+		return 60
+	case "hour":
+		return 3600
+	case "day":
+		return 86400
+	}
+	return 0
+}
+
+// parseAtMillis parses a Continue After absolute "at" value into epoch millis,
+// accepting the browser datetime-local shape ("2006-01-02T15:04"[":05"]) and
+// full RFC3339. It returns 0 when the value is blank or unparseable, leaving the
+// handler to fall back to (or surface) a missing schedule.
+func parseAtMillis(at string) int64 {
+	if at == "" {
+		return 0
+	}
+	layouts := []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04"}
+	for _, l := range layouts {
+		if t, err := time.Parse(l, at); err == nil {
+			return t.UnixMilli()
+		}
+	}
+	return 0
 }
 
 // pluginUniqId is the identity a plugin node is registered under. It must match
@@ -314,17 +367,28 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 		evNode.ExtrinsicRule.Data = payload
 		node.Extrinsic = &evNode.ExtrinsicRule
 	case NODE_UNTIL:
-		// Continue After → an extrinsic on svc.continue.at. The schedule (delay or
-		// absolute time) travels in Data; the captured outbound nodes are added by
-		// the FLowCompiler post-pass (it has the edges).
+		// Continue After → an extrinsic on svc.continue.at. The schedule is either a
+		// relative delay (a unit `mode` — seconds/minutes/hour/day — times `value`)
+		// or an absolute `at` date/time. Both collapse to a single unix time: an
+		// `at` is resolved to absolute epoch-millis (continueAt) here at compile
+		// time; a delay is reduced to delaySeconds, which the continue.at handler
+		// adds to the moment it is invoked at run time. The captured outbound nodes
+		// are NOT resolved here — they travel in the compiled Node.Next, which the
+		// handler reads from the request body to schedule the resumed run.
 		node.Type = inflowModels.ExtrinsicNodeType
 		evNode := inflowNodes.NewExtrinsicSvcNode(ContinueSubject, inflowNodes.WithUniqId[*inflowNodes.ExtrinsicSvcNode](vfn.ID))
 		evNode.ExtrinsicRule.ReqTimeoutSecound = 10
-		payload := map[string]any{"nodeId": vfn.ID}
-		for _, k := range []string{"mode", "delaySeconds", "at"} {
-			if v, ok := nodeData[k]; ok {
-				payload[k] = v
-			}
+		mode := getStr(nodeData, "mode")
+		payload := map[string]any{"nodeId": vfn.ID, "mode": mode}
+		switch {
+		case mode == "at":
+			payload["at"] = getStr(nodeData, "at")
+			payload["continueAt"] = parseAtMillis(getStr(nodeData, "at"))
+		case delayModeSeconds(mode) > 0:
+			payload["delaySeconds"] = int64(getFloat(nodeData, "value") * float64(delayModeSeconds(mode)))
+		default:
+			// Legacy nodes carried delaySeconds directly (pre unit/value modes).
+			payload["delaySeconds"] = int64(getFloat(nodeData, "delaySeconds"))
 		}
 		evNode.ExtrinsicRule.Data = payload
 		node.Extrinsic = &evNode.ExtrinsicRule

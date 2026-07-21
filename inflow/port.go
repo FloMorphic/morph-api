@@ -93,12 +93,12 @@ func LoadSvcNodehandlers(store repository.Store) error {
 	}
 	fmt.Println("New SVC handler registered On  ", svcHandler.SvcTopic(StoreVecSubject).ConvertToSubscribe())
 
-	// Continue-After: park-and-resume at a scheduled time. Ack-only stub for now.
-	// TODO: record a scheduled process (StartWorkflow with ScheduledAt) whose
-	// virtual start node resumes the captured `nextNodes`.
+	// Continue-After: park-and-resume at a scheduled time. HandleContinueAfter
+	// records a scheduled process (StartWorkflow with ScheduledAt) whose start is
+	// the captured `nextNodes`, tagged with its origin flow/node, and stops the
+	// live run so it parks here.
 	if err := svcHandler.ImplHandlerOnSubject(SvcContinueAt, svcHandler.SvcTopic(ContinueSubj), func(header nats.Header, data []byte) ([]byte, error) {
-		fmt.Printf("continue.at svc stub: data=%s\n", string(data))
-		return []byte(`{"status":"scheduled"}`), nil
+		return HandleContinueAfter(store, header, data)
 	}); err != nil {
 		return fmt.Errorf("failed to create continue service node : %v", err)
 	}
