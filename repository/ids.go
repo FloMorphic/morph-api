@@ -19,6 +19,7 @@ const (
 	HumanTaskIDPrefix   = "hitl"
 	NodeSettingIDPrefix = "nset"
 	ExtensionIDPrefix   = "ext"
+	DocumentIDPrefix    = "doc"
 	// Processes have no string id prefix — their identity is an auto-increment
 	// integer index_id (see models.Process.IndexID).
 )

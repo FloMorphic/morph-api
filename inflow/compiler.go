@@ -287,12 +287,14 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 		node.Extrinsic = &evNode.ExtrinsicRule
 	case NODE_DOCSTORE, NODE_VECSTORE:
 		// Doc / Vector store → an extrinsic on svc.store.{doc,vec}.{ACTION}. The
-		// referenced store and the input JSONPath travel in the Data payload; the
-		// action (search / upsert) selects the concrete subject.
+		// referenced store travels in the Data payload; the action selects the
+		// concrete subject. A `read` carries its `query` (SQL run against the
+		// store); a `write` carries its `input` (the JSONPath/scope of the value
+		// to store).
 		node.Type = inflowModels.ExtrinsicNodeType
 		action := getStr(nodeData, "action")
 		if action == "" {
-			action = "search"
+			action = "read"
 		}
 		tmpl := SubjectStoreDoc
 		if vfn.Type == NODE_VECSTORE {
@@ -302,7 +304,7 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 		evNode := inflowNodes.NewExtrinsicSvcNode(subject)
 		evNode.ExtrinsicRule.ReqTimeoutSecound = 30
 		payload := map[string]any{"action": action}
-		for _, k := range []string{"storeId", "input", "scope", "key"} {
+		for _, k := range []string{"storeId", "query", "input", "scope", "key"} {
 			if v, ok := nodeData[k]; ok {
 				payload[k] = v
 			}

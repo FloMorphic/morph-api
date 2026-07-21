@@ -80,6 +80,12 @@ func validateMemory(m *models.MemoryStore) string {
 		if strings.TrimSpace(m.Document.Table) == "" {
 			return "document.table is required"
 		}
+		// The table name is interpolated into DDL/DML (it cannot be a bound
+		// parameter), so it must be a plain identifier — reject anything else
+		// up front rather than at provisioning time.
+		if !models.IsSafeIdentifier(m.Document.Table) {
+			return "document.table must be a plain identifier (letters, digits, underscore; not starting with a digit)"
+		}
 		if len(m.Document.Columns) == 0 {
 			return "document.columns must have at least one column"
 		}

@@ -66,6 +66,18 @@ type MemoryRepository interface {
 	// collection in the web app, so there is no cursor.
 	List(ctx context.Context) ([]models.MemoryStore, error)
 	Delete(ctx context.Context, id string) error
+	// RunReadQuery executes a document-store read against the given store and
+	// returns the matched rows. The query MUST already have passed
+	// models.ValidateReadSQL (single read-only statement) — the implementation
+	// trusts that gate and only adds a read-only transaction as defense in
+	// depth. The store is passed, not just the SQL, so the database a store is
+	// bound to can be resolved per-store (today: the single app DB).
+	RunReadQuery(ctx context.Context, store *models.MemoryStore, query string) ([]map[string]any, error)
+	// WriteDocument stores one JSON document in the store's backing table and
+	// returns its generated id. There is no SQL injection surface: the table
+	// name comes from the (validated) store config and the document is bound as
+	// a single JSON parameter, so the payload's shape is never interpreted.
+	WriteDocument(ctx context.Context, store *models.MemoryStore, doc map[string]any) (string, error)
 }
 
 // PromptRepository is CRUD for prompt templates (PromptRecord).

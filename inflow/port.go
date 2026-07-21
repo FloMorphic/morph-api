@@ -69,27 +69,29 @@ func LoadSvcNodehandlers(store repository.Store) error {
 	}
 	fmt.Println("New SVC handler registered On  ", svcHandler.SvcTopic(HitlSubject).ConvertToSubscribe())
 
-	// Document / vector store services. inflo-fusion owns the real read-write; we
-	// register ack-only stubs so a flow using a Doc/Vector Store node completes
-	// rather than timing out when no store service is connected.
-	// TODO: implement real search / upsert (delegated to inflo-fusion).
-	for _, s := range []struct {
-		name    string
-		subject string
-	}{
-		{SvcStoreDoc, StoreDocSubject},
-		{SvcStoreVec, StoreVecSubject},
-	} {
-		s := s
-		if err := svcHandler.ImplHandlerOnSubject(s.name, svcHandler.SvcTopic(s.subject), func(header nats.Header, data []byte) ([]byte, error) {
-			subject := header.Get("recv_subject")
-			fmt.Printf("store svc stub: %s data=%s\n", subject, string(data))
-			return []byte(`{"status":"accepted","items":[]}`), nil
-		}); err != nil {
-			return fmt.Errorf("failed to create %s service node : %v", s.name, err)
-		}
-		fmt.Println("New SVC handler registered On  ", svcHandler.SvcTopic(s.subject).ConvertToSubscribe())
+	// Document store service. A `read` runs a validated, read-only SQL query
+	// against the store's database; a `write` stores the request's JSON object
+	// as a document. The concrete action is the last subject token
+	// (svc.store.doc.{read,write}).
+	if err := svcHandler.ImplHandlerOnSubject(SvcStoreDoc, svcHandler.SvcTopic(StoreDocSubject), func(header nats.Header, data []byte) ([]byte, error) {
+		return handleDocStore(store, header, data)
+	}); err != nil {
+		return fmt.Errorf("failed to create %s service node : %v", SvcStoreDoc, err)
 	}
+	fmt.Println("New SVC handler registered On  ", svcHandler.SvcTopic(StoreDocSubject).ConvertToSubscribe())
+
+	// Vector store service. Similarity search/index is genuinely different from
+	// SQL and is delegated to inflo-fusion; keep an ack-only stub so a flow using
+	// a Vector Store node completes rather than timing out.
+	// TODO: implement real vector search / index (delegated to inflo-fusion).
+	if err := svcHandler.ImplHandlerOnSubject(SvcStoreVec, svcHandler.SvcTopic(StoreVecSubject), func(header nats.Header, data []byte) ([]byte, error) {
+		subject := header.Get("recv_subject")
+		fmt.Printf("vector store svc stub: %s data=%s\n", subject, string(data))
+		return []byte(`{"status":"accepted","items":[]}`), nil
+	}); err != nil {
+		return fmt.Errorf("failed to create %s service node : %v", SvcStoreVec, err)
+	}
+	fmt.Println("New SVC handler registered On  ", svcHandler.SvcTopic(StoreVecSubject).ConvertToSubscribe())
 
 	// Continue-After: park-and-resume at a scheduled time. Ack-only stub for now.
 	// TODO: record a scheduled process (StartWorkflow with ScheduledAt) whose
@@ -220,4 +222,95 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// storeRequest is the payload delivered to a store svc subject: the store the
+// node references plus the action-specific fields the compiler carried
+// (`query` for a read, `input` for a write).
+type storeRequest struct {
+	Action  string `json:"action"`
+	StoreID string `json:"storeId"`
+	Query   string `json:"query"`
+	Input   any    `json:"input"`
+	Scope   string `json:"scope"`
+	Key     string `json:"key"`
+}
+
+// handleDocStore serves svc.store.doc.{read,write}. It resolves the referenced
+// document store and dispatches: a read runs a validated, read-only SQL query;
+// a write stores the request's JSON object as a document. A rejected or failing
+// request returns an error so the run fails visibly rather than looking like an
+// empty success.
+func handleDocStore(store repository.Store, header nats.Header, data []byte) ([]byte, error) {
+	var req storeRequest
+	_ = sonic.Unmarshal(data, &req)
+
+	action := strings.ToLower(strings.TrimSpace(actionFromSubject(header, req.Action)))
+	if strings.TrimSpace(req.StoreID) == "" {
+		return nil, fmt.Errorf("doc store %s: request has no storeId", action)
+	}
+	// The store is resolved server-side; it — not the request — decides which
+	// database/table is touched.
+	rec, err := store.Memory().GetByID(context.Background(), req.StoreID)
+	if err != nil {
+		return nil, fmt.Errorf("doc store %s: store %q not found: %w", action, req.StoreID, err)
+	}
+	if rec.Type != models.MemoryDocument || rec.Document == nil {
+		return nil, fmt.Errorf("doc store %s: store %q is not a document store", action, req.StoreID)
+	}
+
+	switch action {
+	case "read":
+		safe, err := models.ValidateReadSQL(req.Query)
+		if err != nil {
+			// A rejected query is a hard failure — never fall through to a read.
+			return nil, fmt.Errorf("doc store read rejected: %w", err)
+		}
+		rows, err := store.Memory().RunReadQuery(context.Background(), rec, safe)
+		if err != nil {
+			return nil, fmt.Errorf("doc store read: %w", err)
+		}
+		resp, _ := sonic.Marshal(map[string]any{"status": "ok", "count": len(rows), "items": rows})
+		return resp, nil
+	case "write":
+		id, err := store.Memory().WriteDocument(context.Background(), rec, documentPayload(req, data))
+		if err != nil {
+			return nil, fmt.Errorf("doc store write: %w", err)
+		}
+		resp, _ := sonic.Marshal(map[string]any{"status": "ok", "id": id})
+		return resp, nil
+	default:
+		return nil, fmt.Errorf("doc store: unsupported action %q", action)
+	}
+}
+
+// documentPayload derives the JSON object a write should store. When the engine
+// has resolved the node's `input` JSONPath to an object, that object is the
+// document; otherwise the request body (minus the control fields the compiler
+// adds) is stored, so a runtime value is never silently dropped.
+func documentPayload(req storeRequest, raw []byte) map[string]any {
+	if obj, ok := req.Input.(map[string]any); ok && len(obj) > 0 {
+		return obj
+	}
+	var body map[string]any
+	if err := sonic.Unmarshal(raw, &body); err != nil || body == nil {
+		return map[string]any{}
+	}
+	for _, k := range []string{"action", "storeId", "query", "input", "scope", "key"} {
+		delete(body, k)
+	}
+	return body
+}
+
+// actionFromSubject recovers the store action from the concrete subject the
+// message arrived on (svc.store.doc.<action>), falling back to the body value.
+func actionFromSubject(header nats.Header, fallback string) string {
+	if subject := header.Get("recv_subject"); subject != "" {
+		if parts := strings.Split(subject, "."); len(parts) > 0 {
+			if last := parts[len(parts)-1]; last != "" && last != "*" {
+				return last
+			}
+		}
+	}
+	return fallback
 }
