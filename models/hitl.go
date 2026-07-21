@@ -1,5 +1,7 @@
 package models
 
+import fuseModels "github.com/Inflowenger/inflow-fusion/models"
+
 // HumanTaskStatus is the lifecycle of a Human-in-the-Loop task.
 //
 //   - open:     created by a running workflow, awaiting human answers.
@@ -54,6 +56,11 @@ type HumanTask struct {
 	Questions []HumanTaskQuestion `json:"questions"`
 	Messages  []HumanTaskMessage  `json:"messages"`
 	Data      map[string]any      `json:"data,omitempty"`
+	// Nexts is the parked node's outbound edge list, captured from the svc
+	// request's Node.Next when the flow reached this HITL node. It is kept so a
+	// future run can resume the flow from exactly these next nodes (the HITL
+	// handler tells the runtime to stop after the node, dropping its next).
+	Nexts []fuseModels.Next `json:"nexts,omitempty"`
 	CreatedAt int64               `json:"createdAt"`
 	UpdatedAt int64               `json:"updatedAt"`
 	ClosedAt  int64               `json:"closedAt"`

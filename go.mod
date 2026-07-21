@@ -3,7 +3,7 @@ module github.com/FloMorphic/morph-api
 go 1.26.2
 
 require (
-	github.com/Inflowenger/inflow-fusion v0.1.6
+	github.com/Inflowenger/inflow-fusion v0.1.7
 	github.com/asg017/sqlite-vec-go-bindings v0.1.6
 	github.com/bytedance/sonic v1.15.2
 	github.com/gofiber/contrib/v3/jwt v1.1.7
@@ -11,6 +11,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.48
 	github.com/nats-io/nats.go v1.52.0
+	github.com/nats-io/nkeys v0.4.16
 )
 
 require (
@@ -30,7 +31,6 @@ require (
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/nats-io/jwt/v2 v2.8.2 // indirect
-	github.com/nats-io/nkeys v0.4.16 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

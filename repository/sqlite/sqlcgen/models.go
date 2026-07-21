@@ -44,6 +44,7 @@ type HumanTask struct {
 	Questions string
 	Messages  string
 	Data      string
+	Nexts     string
 	CreatedAt int64
 	UpdatedAt int64
 	ClosedAt  int64

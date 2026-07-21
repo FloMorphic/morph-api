@@ -40,7 +40,7 @@ func (q *Queries) DeleteHumanTask(ctx context.Context, id string) (int64, error)
 }
 
 const getHumanTask = `-- name: GetHumanTask :one
-SELECT id, title, status, pid, flow_id, node_id, context_id, questions, messages, data, created_at, updated_at, closed_at FROM human_tasks WHERE id = ?1
+SELECT id, title, status, pid, flow_id, node_id, context_id, questions, messages, data, nexts, created_at, updated_at, closed_at FROM human_tasks WHERE id = ?1
 `
 
 func (q *Queries) GetHumanTask(ctx context.Context, id string) (HumanTask, error) {
@@ -57,6 +57,7 @@ func (q *Queries) GetHumanTask(ctx context.Context, id string) (HumanTask, error
 		&i.Questions,
 		&i.Messages,
 		&i.Data,
+		&i.Nexts,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ClosedAt,
@@ -65,7 +66,7 @@ func (q *Queries) GetHumanTask(ctx context.Context, id string) (HumanTask, error
 }
 
 const listHumanTasks = `-- name: ListHumanTasks :many
-SELECT id, title, status, pid, flow_id, node_id, context_id, questions, messages, data, created_at, updated_at, closed_at FROM human_tasks
+SELECT id, title, status, pid, flow_id, node_id, context_id, questions, messages, data, nexts, created_at, updated_at, closed_at FROM human_tasks
 WHERE (?1 = '' OR title LIKE '%' || ?1 || '%')
   AND (?2 = '' OR status = ?2)
 ORDER BY updated_at DESC, id DESC
@@ -104,6 +105,7 @@ func (q *Queries) ListHumanTasks(ctx context.Context, arg ListHumanTasksParams) 
 			&i.Questions,
 			&i.Messages,
 			&i.Data,
+			&i.Nexts,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ClosedAt,
@@ -124,10 +126,10 @@ func (q *Queries) ListHumanTasks(ctx context.Context, arg ListHumanTasksParams) 
 const upsertHumanTask = `-- name: UpsertHumanTask :exec
 INSERT INTO human_tasks (
     id, title, status, pid, flow_id, node_id, context_id,
-    questions, messages, data, created_at, updated_at, closed_at
+    questions, messages, data, nexts, created_at, updated_at, closed_at
 ) VALUES (
     ?1, ?2, ?3, ?4, ?5, ?6, ?7,
-    ?8, ?9, ?10, ?11, ?12, ?13
+    ?8, ?9, ?10, ?11, ?12, ?13, ?14
 )
 ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
@@ -139,6 +141,7 @@ ON CONFLICT(id) DO UPDATE SET
     questions = excluded.questions,
     messages = excluded.messages,
     data = excluded.data,
+    nexts = excluded.nexts,
     updated_at = excluded.updated_at,
     closed_at = excluded.closed_at
 `
@@ -154,6 +157,7 @@ type UpsertHumanTaskParams struct {
 	Questions string
 	Messages  string
 	Data      string
+	Nexts     string
 	CreatedAt int64
 	UpdatedAt int64
 	ClosedAt  int64
@@ -171,6 +175,7 @@ func (q *Queries) UpsertHumanTask(ctx context.Context, arg UpsertHumanTaskParams
 		arg.Questions,
 		arg.Messages,
 		arg.Data,
+		arg.Nexts,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 		arg.ClosedAt,

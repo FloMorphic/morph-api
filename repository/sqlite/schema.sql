@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS human_tasks (
     questions  TEXT    NOT NULL DEFAULT '[]',
     messages   TEXT    NOT NULL DEFAULT '[]',
     data       TEXT    NOT NULL DEFAULT '{}',
+    nexts      TEXT    NOT NULL DEFAULT '[]',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
     closed_at  INTEGER NOT NULL DEFAULT 0

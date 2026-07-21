@@ -9,6 +9,7 @@ import (
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
 	fuse "github.com/Inflowenger/inflow-fusion/inflow"
+	inflowModels "github.com/Inflowenger/inflow-fusion/models"
 	svcHandler "github.com/Inflowenger/inflow-fusion/svcHandler"
 	"github.com/bytedance/sonic"
 	"github.com/nats-io/nats.go"
@@ -60,8 +61,10 @@ func LoadSvcNodehandlers(store repository.Store) error {
 
 	// Human-in-the-Loop: when a workflow reaches a `humanInLoop` node the engine
 	// publishes here. We record the task (pid / flowId / nodeId / contextId +
-	// questions) and immediately ack — the flow's blocking/resume is handled by
-	// the inflow runtime based on the node data.
+	// questions) and capture the node's outbound edges, then reply with a `stop`
+	// command (svcHandler.StopHereResponse) so the runtime parks the flow at this
+	// node — it drops the node's next and does not continue until a resume run
+	// restarts from the captured nexts.
 	if err := svcHandler.ImplHandlerOnSubject(SvcHitl, svcHandler.SvcTopic(HitlSubject), func(header nats.Header, data []byte) ([]byte, error) {
 		return handleHumanTask(store, header, data)
 	}); err != nil {
@@ -112,10 +115,11 @@ func LoadSvcNodehandlers(store repository.Store) error {
 	return nil
 }
 
-// hitlRequest is the request payload the engine delivers to the HITL subject:
-// the node's static `data` (title/questions) plus the process fields the runtime
-// merges in. Fields are read defensively — any that are absent stay empty.
-type hitlRequest struct {
+// hitlPayload is the compile-time `op` payload the HITL node carries (set in the
+// compiler's NODE_HITL case as ExtrinsicRule.Data): the node's title/questions
+// and its nodeId. The runtime delivers it under the request envelope's `op`
+// field. Fields are read defensively — any that are absent stay empty.
+type hitlPayload struct {
 	Title     string `json:"title"`
 	PID       string `json:"pid"`
 	FlowID    string `json:"flowId"`
@@ -148,21 +152,34 @@ func (q *questionInput) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// handleHumanTask persists (upserts) the task for a HITL node execution and acks.
+// handleHumanTask persists (upserts) the task for a HITL node execution, captures
+// the node's outbound edges for a future resume, and replies with a `stop`
+// command so the runtime parks the flow at this node.
 func handleHumanTask(store repository.Store, header nats.Header, data []byte) ([]byte, error) {
-	var req hitlRequest
-	// A malformed body is not fatal — we still record what we can.
-	_ = sonic.Unmarshal(data, &req)
+	// inflow-fusion delivers every extrinsic svc request as an envelope: the
+	// flow's live scoped `Data`, the compile-time `op` payload we set on the node
+	// (ExtrinsicRule.Data — here the title/questions/nodeId), and the full `Node`
+	// whose Next edges let a parked flow resume. A malformed body is not fatal —
+	// we still record what we can.
+	body := parseSvcRequest(data)
 
-	// Prefer explicit header values (set by the runtime) over the body.
+	req := decodeOp[hitlPayload](body.OperationData)
+
+	// Prefer explicit header values (set by the runtime) over the payload.
 	pid := firstNonEmpty(header.Get("pid"), req.PID)
 	flowID := firstNonEmpty(header.Get("flowId"), req.FlowID)
 	contextID := firstNonEmpty(header.Get("contextId"), req.ContextID)
-	// nodeId is recoverable from the concrete subject the message arrived on.
+	// nodeId comes from the node model first, then the payload, then the concrete
+	// subject the message arrived on.
 	nodeID := req.NodeID
+	if body.Node != nil && body.Node.ID != "" {
+		nodeID = body.Node.ID
+	}
 	if subject := header.Get("recv_subject"); subject != "" {
 		if parts := strings.Split(subject, "."); len(parts) > 0 {
-			nodeID = parts[len(parts)-1]
+			if last := parts[len(parts)-1]; last != "" && nodeID == "" {
+				nodeID = last
+			}
 		}
 	}
 
@@ -180,9 +197,12 @@ func handleHumanTask(store repository.Store, header nats.Header, data []byte) ([
 		questions = append(questions, models.HumanTaskQuestion{ID: id, Text: q.Text})
 	}
 
-	// Keep the raw request body as a data snapshot for traceability.
-	var raw map[string]any
-	_ = sonic.Unmarshal(data, &raw)
+	// Capture the node's outbound edges so a future run can resume the flow from
+	// exactly these nexts (we tell the runtime to stop after this node below).
+	var nexts []inflowModels.Next
+	if body.Node != nil {
+		nexts = body.Node.Next
+	}
 
 	task := &models.HumanTask{
 		// Deterministic id per (process, node) so a node re-entry updates the
@@ -196,16 +216,50 @@ func handleHumanTask(store repository.Store, header nats.Header, data []byte) ([
 		NodeID:    nodeID,
 		ContextID: contextID,
 		Questions: questions,
-		Data:      raw,
+		// The main scoped data at the moment the flow parked, kept for traceability.
+		Data:  scopedDataMap(body.Data),
+		Nexts: nexts,
 	}
 	if err := store.HumanTasks().Upsert(context.Background(), task); err != nil {
 		return nil, fmt.Errorf("record human task: %w", err)
 	}
-	fmt.Printf("hitl: recorded task %s (pid=%s flow=%s node=%s) with %d question(s)\n",
-		task.ID, pid, flowID, nodeID, len(questions))
+	fmt.Printf("hitl: recorded task %s (pid=%s flow=%s node=%s) with %d question(s), %d next(s)\n",
+		task.ID, pid, flowID, nodeID, len(questions), len(nexts))
 
-	resp, _ := sonic.Marshal(map[string]any{"taskId": task.ID, "status": task.Status})
-	return resp, nil
+	// Reply with a stop command: the runtime clears this node's next and does not
+	// continue — the flow resumes later from the captured nexts.
+	return svcHandler.StopHereResponse(map[string]any{"taskId": task.ID, "status": task.Status})
+}
+
+// parseSvcRequest unmarshals the extrinsic svc request envelope inflow-fusion
+// delivers (v0.1.7+). A malformed body yields a zero envelope rather than an
+// error so a handler can still record what it can.
+func parseSvcRequest(data []byte) inflowModels.ExtSvcRequestBody {
+	var body inflowModels.ExtSvcRequestBody
+	_ = sonic.Unmarshal(data, &body)
+	return body
+}
+
+// decodeOp re-decodes the envelope's `op` map (the compile-time ExtrinsicRule.Data)
+// into a typed payload T.
+func decodeOp[T any](op map[string]any) T {
+	var out T
+	if len(op) == 0 {
+		return out
+	}
+	if b, err := sonic.Marshal(op); err == nil {
+		_ = sonic.Unmarshal(b, &out)
+	}
+	return out
+}
+
+// scopedDataMap returns the envelope's live scoped `Data` as an object, or nil
+// when it is absent or not an object.
+func scopedDataMap(data any) map[string]any {
+	if m, ok := data.(map[string]any); ok && len(m) > 0 {
+		return m
+	}
+	return nil
 }
 
 func hitlTaskID(pid, nodeID string) string {
@@ -242,8 +296,10 @@ type storeRequest struct {
 // request returns an error so the run fails visibly rather than looking like an
 // empty success.
 func handleDocStore(store repository.Store, header nats.Header, data []byte) ([]byte, error) {
-	var req storeRequest
-	_ = sonic.Unmarshal(data, &req)
+	// The store fields (storeId/query/input/…) travel in the envelope's `op`
+	// payload; the write document comes from the live scoped `Data`.
+	body := parseSvcRequest(data)
+	req := decodeOp[storeRequest](body.OperationData)
 
 	action := strings.ToLower(strings.TrimSpace(actionFromSubject(header, req.Action)))
 	if strings.TrimSpace(req.StoreID) == "" {
@@ -273,7 +329,7 @@ func handleDocStore(store repository.Store, header nats.Header, data []byte) ([]
 		resp, _ := sonic.Marshal(map[string]any{"status": "ok", "count": len(rows), "items": rows})
 		return resp, nil
 	case "write":
-		id, err := store.Memory().WriteDocument(context.Background(), rec, documentPayload(req, data))
+		id, err := store.Memory().WriteDocument(context.Background(), rec, documentPayload(req, body.Data))
 		if err != nil {
 			return nil, fmt.Errorf("doc store write: %w", err)
 		}
@@ -284,22 +340,18 @@ func handleDocStore(store repository.Store, header nats.Header, data []byte) ([]
 	}
 }
 
-// documentPayload derives the JSON object a write should store. When the engine
-// has resolved the node's `input` JSONPath to an object, that object is the
-// document; otherwise the request body (minus the control fields the compiler
-// adds) is stored, so a runtime value is never silently dropped.
-func documentPayload(req storeRequest, raw []byte) map[string]any {
+// documentPayload derives the JSON object a write should store. When the node's
+// `input` (from `op`) is already a concrete object, that object is the document;
+// otherwise the flow's live scoped `Data` is stored, so a runtime value is never
+// silently dropped.
+func documentPayload(req storeRequest, scoped any) map[string]any {
 	if obj, ok := req.Input.(map[string]any); ok && len(obj) > 0 {
 		return obj
 	}
-	var body map[string]any
-	if err := sonic.Unmarshal(raw, &body); err != nil || body == nil {
-		return map[string]any{}
+	if obj := scopedDataMap(scoped); obj != nil {
+		return obj
 	}
-	for _, k := range []string{"action", "storeId", "query", "input", "scope", "key"} {
-		delete(body, k)
-	}
-	return body
+	return map[string]any{}
 }
 
 // actionFromSubject recovers the store action from the concrete subject the

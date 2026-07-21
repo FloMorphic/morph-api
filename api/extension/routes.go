@@ -30,4 +30,10 @@ func Register(api fiber.Router, store repository.Store) {
 	g.Get("/id/:id/settings", ctl.settings)             // live: plugin @settings form
 	g.Get("/id/:id/actions", ctl.actions)               // live: plugin @actions list
 	g.Get("/id/:id/actions/:method/form", ctl.actionForm) // live: one action's @form
+
+	// Plugins: mint a runtime credential for a plugin-backed node (builtin
+	// llm/mcp/cast carry a hard-coded pluginId from the seed) so its inflowv1
+	// plugin can be run to serve the node's functionality.
+	p := g.Group("/plugin")
+	p.Post("/cred", ctl.pluginCred)
 }

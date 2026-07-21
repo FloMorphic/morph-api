@@ -60,6 +60,10 @@ func (r *humanTaskRepo) Upsert(ctx context.Context, t *models.HumanTask) error {
 		}
 		data = string(b)
 	}
+	nexts, err := json.Marshal(t.Nexts)
+	if err != nil {
+		return fmt.Errorf("sqlite: marshal human task nexts: %w", err)
+	}
 
 	return r.q.UpsertHumanTask(ctx, sqlcgen.UpsertHumanTaskParams{
 		ID:        t.ID,
@@ -72,6 +76,7 @@ func (r *humanTaskRepo) Upsert(ctx context.Context, t *models.HumanTask) error {
 		Questions: string(questions),
 		Messages:  string(messages),
 		Data:      data,
+		Nexts:     string(nexts),
 		CreatedAt: t.CreatedAt,
 		UpdatedAt: t.UpdatedAt,
 		ClosedAt:  t.ClosedAt,
@@ -220,6 +225,11 @@ func humanTaskFromRow(row sqlcgen.HumanTask) (*models.HumanTask, error) {
 	if row.Data != "" && row.Data != "{}" {
 		if err := json.Unmarshal([]byte(row.Data), &rec.Data); err != nil {
 			return nil, fmt.Errorf("sqlite: unmarshal human task data for %s: %w", row.ID, err)
+		}
+	}
+	if row.Nexts != "" && row.Nexts != "[]" && row.Nexts != "null" {
+		if err := json.Unmarshal([]byte(row.Nexts), &rec.Nexts); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal human task nexts for %s: %w", row.ID, err)
 		}
 	}
 	return rec, nil

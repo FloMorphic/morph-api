@@ -16,10 +16,10 @@ WHERE (@search = '' OR title LIKE '%' || @search || '%')
 -- name: UpsertHumanTask :exec
 INSERT INTO human_tasks (
     id, title, status, pid, flow_id, node_id, context_id,
-    questions, messages, data, created_at, updated_at, closed_at
+    questions, messages, data, nexts, created_at, updated_at, closed_at
 ) VALUES (
     @id, @title, @status, @pid, @flow_id, @node_id, @context_id,
-    @questions, @messages, @data, @created_at, @updated_at, @closed_at
+    @questions, @messages, @data, @nexts, @created_at, @updated_at, @closed_at
 )
 ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
@@ -31,6 +31,7 @@ ON CONFLICT(id) DO UPDATE SET
     questions = excluded.questions,
     messages = excluded.messages,
     data = excluded.data,
+    nexts = excluded.nexts,
     updated_at = excluded.updated_at,
     closed_at = excluded.closed_at;
 

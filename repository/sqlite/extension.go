@@ -120,8 +120,22 @@ func (r *extensionRepo) SeedBuiltins(ctx context.Context, defs []models.Extensio
 	inserted := 0
 	for i := range defs {
 		def := defs[i]
-		if _, err := r.q.GetBuiltinByName(ctx, def.Name); err == nil {
-			continue // already seeded
+		if row, err := r.q.GetBuiltinByName(ctx, def.Name); err == nil {
+			// Already seeded. Backfill the hard-coded pluginId onto the existing
+			// row if the seed now carries one and the row is missing it (so the
+			// plugin-backed builtins gain their credential wiring on re-seed
+			// without clobbering any admin edits to the other fields).
+			if def.PluginID != "" && row.PluginID == "" {
+				existing, err := extensionFromRow(row)
+				if err != nil {
+					return inserted, err
+				}
+				existing.PluginID = def.PluginID
+				if err := r.Upsert(ctx, existing); err != nil {
+					return inserted, err
+				}
+			}
+			continue
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return inserted, err
 		}

@@ -81,3 +81,24 @@ type FormParameters struct {
 	Schema map[string]any `json:"schema"`
 	UI     map[string]any `json:"ui"`
 }
+
+// AccessCredType selects how broad the minted plugin credential is: MultiPluginAccess
+// grants an open credential on the account, StrictAccess scopes it to a single
+// plugin's inflowv1 subjects (see the inflow-fusion PluginCredential* permissions).
+type AccessCredType string
+
+const (
+	MultiPluginAccess AccessCredType = "multi"
+	StrictAccess      AccessCredType = "strict"
+)
+
+// CredRequest asks the backend to mint a runtime credential for a plugin-backed
+// node (the builtin llm/mcp/cast nodes carry a hard-coded PluginID from the
+// seed). The credential lets the plugin be run so it can serve the node's
+// functionality. SpaceId is optional — empty means the builtin-plugins account.
+type CredRequest struct {
+	PluginId string         `json:"pluginId"`
+	Name     string         `json:"name"`
+	Access   AccessCredType `json:"access"`
+	SpaceId  string         `json:"spaceId"`
+}
