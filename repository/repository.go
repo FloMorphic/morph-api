@@ -78,6 +78,17 @@ type MemoryRepository interface {
 	// name comes from the (validated) store config and the document is bound as
 	// a single JSON parameter, so the payload's shape is never interpreted.
 	WriteDocument(ctx context.Context, store *models.MemoryStore, doc map[string]any) (string, error)
+	// IndexVector stores one already-embedded vector (with its source text and
+	// optional metadata) in the store's sqlite-vec index and returns the id it
+	// was stored under. The caller produces the vector from the store's captured
+	// embedding config; the implementation only checks its width matches the
+	// index and binds every value as a parameter.
+	IndexVector(ctx context.Context, store *models.MemoryStore, content string, vector []float32, metadata map[string]any) (string, error)
+	// SearchVectors runs a k-nearest-neighbour search over the store's index for
+	// the given query vector and returns the closest matches (by the store's
+	// configured metric), nearest first. k is clamped to a sane bound by the
+	// implementation.
+	SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int) ([]models.VectorMatch, error)
 }
 
 // PromptRepository is CRUD for prompt templates (PromptRecord).

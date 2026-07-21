@@ -66,6 +66,14 @@ func validateMemory(m *models.MemoryStore) string {
 		if m.Vector == nil {
 			return "vector config is required for a vector store"
 		}
+		// A vector store captures its embedding provider/model/size once, here:
+		// the vector svc handler reuses them for every index and search, so all
+		// three must be present up front. (The token is needed to call the
+		// provider but may be injected via other means, so it is not required at
+		// create time — the handler surfaces a clear error if it is still absent.)
+		if strings.TrimSpace(m.Vector.Provider) == "" {
+			return "vector.provider is required (the embedding LLM provider, e.g. \"openai\", or a full base URL)"
+		}
 		if strings.TrimSpace(m.Vector.EmbeddingModel) == "" {
 			return "vector.embeddingModel is required"
 		}

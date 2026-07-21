@@ -11,7 +11,12 @@ import (
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
 	"github.com/FloMorphic/morph-api/repository/sqlite/sqlcgen"
+	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
 )
+
+// maxVectorSearchK caps how many neighbours a single similarity search may
+// return, so a request can never ask the index for an unbounded scan.
+const maxVectorSearchK = 100
 
 type memoryRepo struct {
 	db *sql.DB
@@ -64,7 +69,7 @@ func (r *memoryRepo) Create(ctx context.Context, m *models.MemoryStore) error {
 	// Provision the sqlite-vec index backing a vector store. If it fails, roll
 	// back the row so we never leave a vector store without its index.
 	if m.Type == models.MemoryVector && m.Vector != nil && m.Vector.Dimensions > 0 {
-		if err := r.createVectorIndex(ctx, m.ID, m.Vector.Dimensions); err != nil {
+		if err := r.createVectorIndex(ctx, m.ID, m.Vector); err != nil {
 			_, _ = r.q.DeleteMemoryStore(ctx, m.ID)
 			return err
 		}
@@ -249,16 +254,112 @@ func (r *memoryRepo) WriteDocument(ctx context.Context, store *models.MemoryStor
 
 // createVectorIndex creates the vec0 virtual table that stores this store's
 // embeddings. Table DDL cannot be parameterized, so the name is sanitized and
-// the dimension is a validated integer.
-func (r *memoryRepo) createVectorIndex(ctx context.Context, id string, dimensions int) error {
+// the dimension is a validated integer; the distance metric comes from a fixed
+// keyword set (never raw config text). Alongside the vector it keeps three
+// auxiliary (unindexed) columns — the document id, its source text, and a JSON
+// metadata blob — so a search can return the original content, not just a
+// rowid.
+func (r *memoryRepo) createVectorIndex(ctx context.Context, id string, cfg *models.VectorMemoryConfig) error {
 	stmt := fmt.Sprintf(
-		"CREATE VIRTUAL TABLE IF NOT EXISTS %s USING vec0(embedding float[%d])",
-		vecTableName(id), dimensions,
+		"CREATE VIRTUAL TABLE IF NOT EXISTS %s USING vec0("+
+			"embedding float[%d] distance_metric=%s, "+
+			"+doc_id text, +content text, +metadata text)",
+		vecTableName(id), cfg.Dimensions, cfg.SQLiteDistanceMetric(),
 	)
 	if _, err := r.db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("sqlite: create vector index: %w", err)
 	}
 	return nil
+}
+
+// IndexVector stores one embedded vector plus its source text and metadata in
+// the store's vec0 index. The vector's width is checked against the store's
+// configured dimensions so a mismatched embedding is rejected before it reaches
+// sqlite-vec (which would otherwise error opaquely). The document id, text, and
+// serialized metadata are all bound as parameters — only the (sanitized) table
+// name is interpolated.
+func (r *memoryRepo) IndexVector(ctx context.Context, store *models.MemoryStore, content string, vector []float32, metadata map[string]any) (string, error) {
+	if store == nil || store.Type != models.MemoryVector || store.Vector == nil {
+		return "", fmt.Errorf("sqlite: index requires a vector store")
+	}
+	if store.Vector.Dimensions > 0 && len(vector) != store.Vector.Dimensions {
+		return "", fmt.Errorf("sqlite: vector has %d dimensions but store %q expects %d", len(vector), store.ID, store.Vector.Dimensions)
+	}
+	blob, err := sqlite_vec.SerializeFloat32(vector)
+	if err != nil {
+		return "", fmt.Errorf("sqlite: serialize vector: %w", err)
+	}
+	metaJSON := "{}"
+	if len(metadata) > 0 {
+		b, err := json.Marshal(metadata)
+		if err != nil {
+			return "", fmt.Errorf("sqlite: marshal vector metadata: %w", err)
+		}
+		metaJSON = string(b)
+	}
+	docID := repository.NewID(repository.VectorIDPrefix)
+	stmt := fmt.Sprintf("INSERT INTO %s (embedding, doc_id, content, metadata) VALUES (?, ?, ?, ?)", vecTableName(store.ID))
+	if _, err := r.db.ExecContext(ctx, stmt, blob, docID, content, metaJSON); err != nil {
+		return "", fmt.Errorf("sqlite: index vector: %w", err)
+	}
+	return docID, nil
+}
+
+// SearchVectors runs a KNN query over the store's vec0 index for the query
+// vector, returning the k nearest matches (nearest first) with their stored
+// text and metadata. The query vector width is validated up front and k is
+// clamped so a caller can never ask for an unbounded scan.
+func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int) ([]models.VectorMatch, error) {
+	if store == nil || store.Type != models.MemoryVector || store.Vector == nil {
+		return nil, fmt.Errorf("sqlite: search requires a vector store")
+	}
+	if store.Vector.Dimensions > 0 && len(vector) != store.Vector.Dimensions {
+		return nil, fmt.Errorf("sqlite: query vector has %d dimensions but store %q expects %d", len(vector), store.ID, store.Vector.Dimensions)
+	}
+	if k <= 0 {
+		k = 5
+	}
+	if k > maxVectorSearchK {
+		k = maxVectorSearchK
+	}
+	blob, err := sqlite_vec.SerializeFloat32(vector)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: serialize query vector: %w", err)
+	}
+	// vec0 KNN: constrain with `embedding MATCH ?` and order by the virtual
+	// `distance` column; LIMIT caps the neighbourhood.
+	stmt := fmt.Sprintf(
+		"SELECT doc_id, content, metadata, distance FROM %s WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+		vecTableName(store.ID),
+	)
+	rows, err := r.db.QueryContext(ctx, stmt, blob, k)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: vector search: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]models.VectorMatch, 0, k)
+	for rows.Next() {
+		var (
+			docID, content, metaJSON string
+			distance                 float64
+		)
+		if err := rows.Scan(&docID, &content, &metaJSON, &distance); err != nil {
+			return nil, fmt.Errorf("sqlite: scan vector match: %w", err)
+		}
+		m := models.VectorMatch{DocID: docID, Content: content, Distance: distance}
+		if metaJSON != "" && metaJSON != "{}" {
+			var meta map[string]any
+			if err := json.Unmarshal([]byte(metaJSON), &meta); err == nil {
+				m.Metadata = meta
+			}
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: iterate vector matches: %w", err)
+	}
+	return out, nil
 }
 
 func (r *memoryRepo) dropVectorIndex(ctx context.Context, id string) error {

@@ -304,7 +304,9 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 		evNode := inflowNodes.NewExtrinsicSvcNode(subject)
 		evNode.ExtrinsicRule.ReqTimeoutSecound = 30
 		payload := map[string]any{"action": action}
-		for _, k := range []string{"storeId", "query", "input", "scope", "key"} {
+		// storeId/query/input/scope/key serve the doc store; text/topK serve the
+		// vector store (the text to embed and how many neighbours a search returns).
+		for _, k := range []string{"storeId", "query", "input", "scope", "key", "text", "topK"} {
 			if v, ok := nodeData[k]; ok {
 				payload[k] = v
 			}

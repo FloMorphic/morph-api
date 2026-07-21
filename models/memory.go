@@ -20,17 +20,51 @@ const (
 // ColumnType is a document-store column's logical type.
 type ColumnType string
 
-// VectorMemoryConfig configures a vector store: an embedding model to turn text
-// into vectors plus the index parameters. When a vector store is created the
+// VectorMemoryConfig configures a vector store: the LLM provider + embedding
+// model used to turn text into vectors, plus the index parameters. These are
+// captured once, when the store is created (see the memory `create` flow), and
+// the vector svc handler reuses them for every index/search — the user is never
+// asked for a provider or vector size again. When a vector store is created the
 // sqlite repository provisions a companion sqlite-vec (vec0) virtual table of
 // `Dimensions` width so similarity search is available.
 type VectorMemoryConfig struct {
+	// Provider is the embedding LLM provider (e.g. "openai"), or a full base URL
+	// of an OpenAI-compatible embeddings endpoint. EmbeddingModel is the model
+	// name and Token the API key both used at index/search time. Dimensions is
+	// the vector width the index is built for and every embedding is checked
+	// against.
 	Provider       string       `json:"provider"`
 	EmbeddingModel string       `json:"embeddingModel"`
 	Token          string       `json:"token"`
 	Dimensions     int          `json:"dimensions"`
 	Metric         VectorMetric `json:"metric"`
 	Namespace      string       `json:"namespace"`
+}
+
+// SQLiteDistanceMetric maps the configured metric to the keyword sqlite-vec's
+// vec0 accepts on a vector column (`distance_metric=`). Defaults to cosine,
+// which is the sensible default for text embeddings; dot product has no direct
+// vec0 equivalent, so it also falls back to cosine (unit-norm embeddings make
+// the two rank identically).
+func (c *VectorMemoryConfig) SQLiteDistanceMetric() string {
+	switch c.Metric {
+	case MetricEuclidean:
+		return "L2"
+	case MetricCosine, MetricDot, "":
+		return "cosine"
+	default:
+		return "cosine"
+	}
+}
+
+// VectorMatch is one hit from a vector similarity search: the stored document
+// id, its original text/metadata, and the distance to the query vector (smaller
+// is closer, per the store's metric).
+type VectorMatch struct {
+	DocID    string         `json:"docId"`
+	Content  string         `json:"content"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+	Distance float64        `json:"distance"`
 }
 
 // TableColumn describes one column of a document store's schema.
