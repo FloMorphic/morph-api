@@ -252,6 +252,55 @@ func (r *memoryRepo) WriteDocument(ctx context.Context, store *models.MemoryStor
 	return id, nil
 }
 
+// UpdateDocument replaces the JSON document stored under id, bumping updated_at.
+// Like WriteDocument it validates the table name and binds the document as a
+// single parameter, so there is no injection surface. A zero rows-affected means
+// no document had that id — reported as repository.ErrNotFound.
+func (r *memoryRepo) UpdateDocument(ctx context.Context, store *models.MemoryStore, id string, doc map[string]any) error {
+	if store == nil || store.Type != models.MemoryDocument || store.Document == nil {
+		return fmt.Errorf("sqlite: update requires a document store")
+	}
+	table := store.Document.Table
+	if !models.IsSafeIdentifier(table) {
+		return fmt.Errorf("sqlite: document store table %q is not a valid identifier", table)
+	}
+	payload, err := json.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("sqlite: marshal document: %w", err)
+	}
+	stmt := fmt.Sprintf("UPDATE %s SET data = ?, updated_at = ? WHERE id = ?", table)
+	res, err := r.db.ExecContext(ctx, stmt, string(payload), nowMillis(), id)
+	if err != nil {
+		return fmt.Errorf("sqlite: update document: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return repository.ErrNotFound
+	}
+	return nil
+}
+
+// DeleteDocument removes the document with the given id from the store's table.
+// The table name is validated and the id bound as a parameter. A zero
+// rows-affected is reported as repository.ErrNotFound.
+func (r *memoryRepo) DeleteDocument(ctx context.Context, store *models.MemoryStore, id string) error {
+	if store == nil || store.Type != models.MemoryDocument || store.Document == nil {
+		return fmt.Errorf("sqlite: delete requires a document store")
+	}
+	table := store.Document.Table
+	if !models.IsSafeIdentifier(table) {
+		return fmt.Errorf("sqlite: document store table %q is not a valid identifier", table)
+	}
+	stmt := fmt.Sprintf("DELETE FROM %s WHERE id = ?", table)
+	res, err := r.db.ExecContext(ctx, stmt, id)
+	if err != nil {
+		return fmt.Errorf("sqlite: delete document: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return repository.ErrNotFound
+	}
+	return nil
+}
+
 // createVectorIndex creates the vec0 virtual table that stores this store's
 // embeddings. Table DDL cannot be parameterized, so the name is sanitized and
 // the dimension is a validated integer; the distance metric comes from a fixed

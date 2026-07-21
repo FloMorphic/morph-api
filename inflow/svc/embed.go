@@ -127,6 +127,14 @@ func embedTexts(ctx context.Context, cfg *models.VectorMemoryConfig, inputs []st
 	return vectors, nil
 }
 
+// EmbedOne is the exported single-text embedding entry point for callers outside
+// this package (e.g. the memory REST controller, which embeds a search query or
+// a document to index using the store's captured provider/model/token). It is a
+// thin wrapper over the internal embedOne.
+func EmbedOne(ctx context.Context, cfg *models.VectorMemoryConfig, input string) ([]float32, error) {
+	return embedOne(ctx, cfg, input)
+}
+
 // embedOne is the single-text convenience over embedTexts.
 func embedOne(ctx context.Context, cfg *models.VectorMemoryConfig, input string) ([]float32, error) {
 	vecs, err := embedTexts(ctx, cfg, []string{input})

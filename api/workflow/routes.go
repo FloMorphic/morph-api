@@ -19,5 +19,6 @@ func Register(api fiber.Router, store repository.Store) {
 	g.Post("", ctl.upsert)
 	g.Get("", ctl.list)
 	g.Get("/id/:id", ctl.getByID)
+	g.Get("/id/:id/compile", ctl.compile)
 	g.Delete("/id/:id", ctl.deleteByID)
 }

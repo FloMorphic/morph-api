@@ -78,6 +78,14 @@ type MemoryRepository interface {
 	// name comes from the (validated) store config and the document is bound as
 	// a single JSON parameter, so the payload's shape is never interpreted.
 	WriteDocument(ctx context.Context, store *models.MemoryStore, doc map[string]any) (string, error)
+	// UpdateDocument replaces the JSON document stored under id in the store's
+	// backing table, bumping updated_at. It returns ErrNotFound when no row has
+	// that id. Injection-safety matches WriteDocument: the table name is
+	// validated and the document is bound as a single JSON parameter.
+	UpdateDocument(ctx context.Context, store *models.MemoryStore, id string, doc map[string]any) error
+	// DeleteDocument removes the document with the given id from the store's
+	// backing table, returning ErrNotFound when no row matched.
+	DeleteDocument(ctx context.Context, store *models.MemoryStore, id string) error
 	// IndexVector stores one already-embedded vector (with its source text and
 	// optional metadata) in the store's sqlite-vec index and returns the id it
 	// was stored under. The caller produces the vector from the store's captured

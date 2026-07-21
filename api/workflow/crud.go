@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/FloMorphic/morph-api/etc"
+	"github.com/FloMorphic/morph-api/inflow"
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
 	"github.com/gofiber/fiber/v3"
@@ -51,6 +52,25 @@ func (ctl *controller) getByID(c fiber.Ctx) error {
 		return etc.FailFromRepo(c, err, "workflow not found")
 	}
 	return etc.OK(c, rec)
+}
+
+// compile handles GET /flow/id/:id/compile — run the inflow compiler over a
+// saved workflow and return the lowered node graph, without launching a run.
+//
+// This is a debug / introspection aid: it surfaces exactly what a Vue Flow graph
+// lowers to on the engine (every morphic node's inflow primitive, its wiring and
+// the edge-derived post-pass), which is otherwise only visible from inside a
+// running process. It never touches the engine and creates nothing.
+func (ctl *controller) compile(c fiber.Ctx) error {
+	rec, err := ctl.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		return etc.FailFromRepo(c, err, "workflow not found")
+	}
+	startNodeID, nodes, err := inflow.FLowCompiler(*rec)
+	if err != nil {
+		return etc.Fail(c, fiber.StatusUnprocessableEntity, err.Error())
+	}
+	return etc.OK(c, fiber.Map{"startNodeId": startNodeID, "nodes": nodes})
 }
 
 // deleteByID handles DELETE /flow/id/:id.

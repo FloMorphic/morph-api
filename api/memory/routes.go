@@ -21,4 +21,13 @@ func Register(api fiber.Router, store repository.Store) {
 	g.Post("", ctl.create)
 	g.Get("/:id", ctl.getByID)
 	g.Delete("/:id", ctl.deleteByID)
+
+	// Record-level data surface used by the web app's store data browser.
+	// Document stores: CRUD over rows. Vector stores: embed-backed search/index.
+	g.Get("/:id/records", ctl.listRecords)
+	g.Post("/:id/records", ctl.createRecord)
+	g.Put("/:id/records/:rid", ctl.updateRecord)
+	g.Delete("/:id/records/:rid", ctl.deleteRecord)
+	g.Post("/:id/search", ctl.searchVectors)
+	g.Post("/:id/vectors", ctl.indexVector)
 }
