@@ -9,6 +9,7 @@ import (
 	"github.com/FloMorphic/morph-api/repository"
 	fuse "github.com/Inflowenger/inflow-fusion/inflow"
 	"github.com/Inflowenger/inflow-fusion/logs"
+	"github.com/gofiber/contrib/v3/socketio"
 	"github.com/nats-io/nats.go"
 )
 
@@ -32,6 +33,11 @@ func SubscribeProcessEvents(store repository.Store) error {
 		return fmt.Errorf("open inflow events pipe: %w", err)
 	}
 	if _, err := con.Subscribe(logs.DefaultSubjectEventLog, func(msg *nats.Msg) {
+		// Relay every raw event to the log-drawer sockets before doing anything
+		// with it — the frontend's flow-trace tracker decides what is usable, so
+		// the API stays a verbatim pipe (cf. inspector-api). A broadcast with no
+		// connected clients is a no-op.
+		socketio.Broadcast(msg.Data, socketio.TextMessage)
 		handleProcFinish(store, msg)
 	}); err != nil {
 		return fmt.Errorf("subscribe %s: %w", logs.DefaultSubjectEventLog, err)
