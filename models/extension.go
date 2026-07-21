@@ -28,14 +28,21 @@ const (
 	ExtEventBaseType  ExtensionType = "extrinsic"
 	ExtPluginBaseType ExtensionType = "plugin"
 
-	// Builtin generics (mirror the palette's static generics tab / the
-	// compiler's node kinds in inflow/compiler.go).
-	ExtStartType        ExtensionType = "startNode"
-	ExtPluginNativeType ExtensionType = "pluginNative"
-	ExtCodeType         ExtensionType = "code"
-	ExtContractType     ExtensionType = "contract"
-	ExtGotoType         ExtensionType = "goto"
-	ExtVoidType         ExtensionType = "void"
+	// Builtin morphic types — FloMorphic's 10 palette nodes. Each is lowered to
+	// an inflow primitive at compile time (see inflow/compiler.go's NodeBuilder).
+	ExtStartType    ExtensionType = "startNode"  // -> void (start marker)
+	ExtHitlType     ExtensionType = "hitl"       // -> extrinsic (svc.hitl.add)
+	ExtDocStoreType ExtensionType = "docstore"   // -> extrinsic (svc.store.doc.{ACTION})
+	ExtVecStoreType ExtensionType = "vecstore"   // -> extrinsic (svc.store.vec.{ACTION})
+	ExtPromiseAll   ExtensionType = "promissall" // -> void (depends on all inbound)
+	ExtLLMType      ExtensionType = "llm"        // -> plugin
+	ExtMCPType      ExtensionType = "mcp"        // -> plugin (MCP client)
+	ExtRuleType     ExtensionType = "rule"       // -> contract
+	ExtJSType       ExtensionType = "js"         // -> code (variant js)
+	ExtOPAType      ExtensionType = "opa"        // -> code (variant opa)
+	ExtGotoType     ExtensionType = "goto"       // -> goto
+	ExtUntilType    ExtensionType = "until"      // -> extrinsic (svc.continue.at)
+	ExtCastType     ExtensionType = "cast"       // -> plugin
 )
 
 // ExtensionRecord is one palette node: metadata plus, for extrinsic nodes, the

@@ -1,7 +1,6 @@
 package inflow
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/FloMorphic/morph-api/models"
@@ -30,17 +29,36 @@ const items: PaletteItem[] = [
 ]
 */
 const (
+	// Legacy / generic inflow node kinds still handled by the compiler.
 	NODE_PLUGIN   = "pluginNative"
-	NODE_START    = "startNode"
 	NODE_VOID     = "void"
 	NODE_CONTRACT = "contract"
 	NODE_CODE     = "code"
 	NODE_EXT_SVC  = "extrinsic"
 	NODE_GOTO     = "goto"
-	NODE_HITL     = "humanInLoop"
 
-	// Extensions
-	NODE_MY_A = "my_a_ext"
+	// FloMorphic builtin morphic types (see models/extension.go). Each lowers to
+	// an inflow primitive below.
+	NODE_START      = "startNode"  // -> void (start marker)
+	NODE_HITL       = "hitl"       // -> extrinsic (svc.hitl.add)
+	NODE_DOCSTORE   = "docstore"   // -> extrinsic (svc.store.doc.{ACTION})
+	NODE_VECSTORE   = "vecstore"   // -> extrinsic (svc.store.vec.{ACTION})
+	NODE_PROMISEALL = "promissall" // -> void (depends on all inbound nodes)
+	NODE_LLM        = "llm"        // -> plugin
+	NODE_MCP        = "mcp"        // -> plugin (MCP client)
+	NODE_RULE       = "rule"       // -> contract
+	NODE_JS         = "js"         // -> code (variant js)
+	NODE_OPA        = "opa"        // -> code (variant opa)
+	NODE_UNTIL      = "until"      // -> extrinsic (svc.continue.at)
+	NODE_CAST       = "cast"       // -> plugin
+
+	// Store service subject templates (inflo-fusion listens on svc.store.{doc,vec}.*).
+	SubjectStoreDoc = "svc.store.doc.{ACTION}"
+	SubjectStoreVec = "svc.store.vec.{ACTION}"
+	// ContinueSubject records/parks a run to resume its outbound nodes at a time.
+	ContinueSubject = "svc.continue.at"
+
+
 )
 
 func GetStartNodeId(f models.FlowRecord) (string, error) {
@@ -69,12 +87,55 @@ func FLowCompiler(f models.FlowRecord) (string, map[string]*inflowModels.Node, e
 	for _, e := range errs {
 		return startNodeId, l, e
 	}
-	compiledNodes := []inflowModels.Node{}
-	for _, el := range l {
-		compiledNodes = append(compiledNodes, *el)
+
+	// Post-pass — edge-derived wiring the per-node hook cannot see (it only gets
+	// one node): a promissall (fan-in) waits on every inbound node.
+	//
+	// A `until` node's outbound "next nodes" are intentionally NOT resolved here:
+	// they must be shipped in the inflow model shape, which the continue.at
+	// listener recovers from the request body at run time (not from the vueFlow
+	// graph). See the svc handler in port.go.
+	for _, n := range f.ViewFlow.Nodes {
+		cn, ok := l[n.ID]
+		if !ok || cn == nil {
+			continue
+		}
+		if n.Type == NODE_PROMISEALL {
+			cn.Depends = inboundSources(f.ViewFlow, n.ID)
+		}
 	}
 
 	return startNodeId, l, nil
+}
+
+// inboundSources returns the ids of every node with an edge into nodeId.
+func inboundSources(flow compiler.VueFlow, nodeId string) []string {
+	out := []string{}
+	for _, e := range flow.Edges {
+		if e.Target == nodeId {
+			out = append(out, e.Source)
+		}
+	}
+	return out
+}
+
+// getStr reads a string field defensively (empty string when absent/other type).
+func getStr(data map[string]any, key string) string {
+	if v, ok := data[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// pluginUniqId is the identity a plugin node is registered under. It must match
+// the backing extension-table row (stamped onto the node data as `extensionId`
+// by the front end when a node is dropped from the palette). Falls back to the
+// node's own id so a standalone / unstamped node still gets a stable identity.
+func pluginUniqId(data map[string]any, nodeID string) string {
+	if id := getStr(data, "extensionId"); id != "" {
+		return id
+	}
+	return nodeID
 }
 
 func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
@@ -95,26 +156,14 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 
 	}
 	switch vfn.Type {
-	case NODE_START:
+	case NODE_START, NODE_PROMISEALL:
+		// Start marker and the fan-in join both lower to a Void node. A
+		// promissall's `depends` (all inbound nodes) is filled by a post-pass in
+		// FLowCompiler, which has the flow's edges.
 		node.Type = inflowModels.VoidNodeType
-	case NODE_MY_A:
-		node.Type = inflowModels.ExtrinsicNodeType
-		ext := models.ExtensionRecord{}
-		json.Unmarshal([]byte(nodeData["extension_raw"].(string)), &ext)
-		values := map[string]any{}
-		for k, v := range ext.BindTo.Values {
-			values[k] = v
-		}
-		svc := svcHandler.GetSvc(ext.BindTo.TopicKey)
-		if svc == "" {
-			return nil, fmt.Errorf("invalid data as %s", NODE_MY_A)
-		}
-		evNode := inflowNodes.NewExtrinsicSvcNode(
-			svcHandler.SvcTopic(svc).MakeReqSubjectWithParams(values),
-		)
-		evNode.ExtrinsicRule.ReqTimeoutSecound = 5
-		node.Extrinsic = &evNode.ExtrinsicRule
-	case NODE_CODE:
+	case NODE_JS, NODE_OPA:
+		// JS / OPA nodes both lower to a Code node; the `lang` field on the data
+		// selects the variant (js / opa).
 		node.Type = inflowModels.CodeNodeType
 
 		if lang, ok := nodeData["lang"].(string); ok {
@@ -140,7 +189,8 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 
 		}
 
-	case NODE_CONTRACT:
+	case NODE_CONTRACT, NODE_RULE:
+		// Rule → a Contract; its handlers drive the routed outbound edges.
 		node.Type = inflowModels.RuleNodeType
 
 		criteria := map[string]any{}
@@ -168,12 +218,6 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 			}
 		}
 
-	case NODE_EXT_SVC:
-		node.Type = inflowModels.ExtrinsicNodeType
-		if subject, ok := nodeData["serviceTopic"].(string); ok {
-			evNode := inflowNodes.NewExtrinsicSvcNode(subject)
-			node.Extrinsic = &evNode.ExtrinsicRule
-		}
 	case NODE_GOTO:
 		node.Type = inflowModels.GoToNodeType
 		gotoNode := inflowNodes.NewGotoNode()
@@ -183,20 +227,40 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 
 		}
 		node.GoTo = &gotoNode.GoToRule
-	case NODE_PLUGIN:
+	case NODE_PLUGIN, NODE_LLM, NODE_MCP, NODE_CAST:
+		// pluginNative and the plugin-backed morphic nodes (LLM / MCP / Cast) all
+		// lower to a Plugin node. The morphic nodes carry their extra config
+		// (functions, url/auth, mappings, …) inside the plugin body so it travels
+		// to the plugin at run time.
 		node.Type = inflowModels.PluginNodeType
-		// pluginUniqId:=fmt.Sprintf("%s-%s",nodeData["title"],vfn.ID)
+		// The plugin's uniqId must equal the backing extension-table row; the front
+		// end stamps that id onto the node data as `extensionId` when the node is
+		// dropped from the palette (see pluginUniqId).
 		pluginNode, err := inflowNodes.NewPluginNode(
-			nodeData["title"].(string),
-			// inflowNodes.WithUniqId[*inflowNodes.PluginNode](pluginUniqId),
-			inflowNodes.WithCustomPrefix(nodeData["subject_prefix"].(string)),
-			inflowNodes.WithIdleWaitMinutes(int8(nodeData["idle_min"].(float64))),
+			getStr(nodeData, "title"),
+			inflowNodes.WithUniqId[*inflowNodes.PluginNode](pluginUniqId(nodeData, vfn.ID)),
+			inflowNodes.WithIdleWaitMinutes(int8(15)),
 		)
-		pluginNode.Body = nodeData["body"].(map[string]any)
-		pluginNode.Request = nodeData["request"].(string)
 		if err != nil {
 			return nil, err
 		}
+		body, _ := nodeData["body"].(map[string]any)
+		if body == nil {
+			body = map[string]any{}
+		}
+		// Carry node-kind-specific config into the plugin body.
+		for _, k := range []string{"functions", "url", "auth", "transport", "mappings", "storeId"} {
+			if v, ok := nodeData[k]; ok {
+				body[k] = v
+			}
+		}
+		// request / body come from the front end; default the request verb to "run".
+		request := getStr(nodeData, "request")
+		if request == "" {
+			request = "run"
+		}
+		pluginNode.Body = body
+		pluginNode.Request = request
 
 		node.Plugin = &pluginNode.PluginRule
 	case NODE_HITL:
@@ -204,19 +268,59 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 		// The subject carries the nodeId so the handler can recover it; the
 		// Data payload carries the title/questions to record on the task.
 		node.Type = inflowModels.ExtrinsicNodeType
-		subj := svcHandler.GetSvc(SvcHitl)
-		if subj == "" {
-			subj = svcHandler.SvcTopic(HitlSubject)
+		subject := svcHandler.GetSvc(SvcHitl)
+		if subject == "" {
+			subject = svcHandler.SvcTopic(HitlSubject)
 		}
-		concrete := subj.MakeReqSubjectWithParams(map[string]any{"nodeId": vfn.ID})
-		evNode := inflowNodes.NewExtrinsicSvcNode(concrete)
-		evNode.ExtrinsicRule.ReqTimeoutSecound = 255
+		// The nodeId travels as the node's uniqId; the Data carries what the hitl
+		// handler records on the task (title / questions).
+		evNode := inflowNodes.NewExtrinsicSvcNode(string(subject), inflowNodes.WithUniqId[*inflowNodes.ExtrinsicSvcNode](vfn.ID))
+		evNode.ExtrinsicRule.ReqTimeoutSecound = 10
 		payload := map[string]any{"nodeId": vfn.ID}
 		if nodeData["title"] != nil {
 			payload["title"] = nodeData["title"]
 		}
 		if nodeData["questions"] != nil {
 			payload["questions"] = nodeData["questions"]
+		}
+		evNode.ExtrinsicRule.Data = payload
+		node.Extrinsic = &evNode.ExtrinsicRule
+	case NODE_DOCSTORE, NODE_VECSTORE:
+		// Doc / Vector store → an extrinsic on svc.store.{doc,vec}.{ACTION}. The
+		// referenced store and the input JSONPath travel in the Data payload; the
+		// action (search / upsert) selects the concrete subject.
+		node.Type = inflowModels.ExtrinsicNodeType
+		action := getStr(nodeData, "action")
+		if action == "" {
+			action = "search"
+		}
+		tmpl := SubjectStoreDoc
+		if vfn.Type == NODE_VECSTORE {
+			tmpl = SubjectStoreVec
+		}
+		subject := svcHandler.SvcTopic(tmpl).MakeReqSubjectWithParams(map[string]any{"ACTION": action})
+		evNode := inflowNodes.NewExtrinsicSvcNode(subject)
+		evNode.ExtrinsicRule.ReqTimeoutSecound = 30
+		payload := map[string]any{"action": action}
+		for _, k := range []string{"storeId", "input", "scope", "key"} {
+			if v, ok := nodeData[k]; ok {
+				payload[k] = v
+			}
+		}
+		evNode.ExtrinsicRule.Data = payload
+		node.Extrinsic = &evNode.ExtrinsicRule
+	case NODE_UNTIL:
+		// Continue After → an extrinsic on svc.continue.at. The schedule (delay or
+		// absolute time) travels in Data; the captured outbound nodes are added by
+		// the FLowCompiler post-pass (it has the edges).
+		node.Type = inflowModels.ExtrinsicNodeType
+		evNode := inflowNodes.NewExtrinsicSvcNode(ContinueSubject, inflowNodes.WithUniqId[*inflowNodes.ExtrinsicSvcNode](vfn.ID))
+		evNode.ExtrinsicRule.ReqTimeoutSecound = 10
+		payload := map[string]any{"nodeId": vfn.ID}
+		for _, k := range []string{"mode", "delaySeconds", "at"} {
+			if v, ok := nodeData[k]; ok {
+				payload[k] = v
+			}
 		}
 		evNode.ExtrinsicRule.Data = payload
 		node.Extrinsic = &evNode.ExtrinsicRule

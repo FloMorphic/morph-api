@@ -15,12 +15,21 @@ import (
 )
 
 // SvcHitl is the logical service name of the Human-in-the-Loop handler, and
-// HitlSubject the subject it answers on. `{nodeId}` is filled at compile time
-// (see compiler.go) so the handler can recover the node from the concrete
-// subject it arrived on.
+// HitlSubject the subject it answers on. The nodeId travels in the request body
+// (see compiler.go's hitl case) so the handler can recover the node.
 const (
 	SvcHitl     = "hitl"
-	HitlSubject = "svc.hitl.task.{nodeId}"
+	HitlSubject = "svc.hitl.add"
+
+	// Store + scheduling service names/subjects. inflo-fusion owns the real
+	// document/vector read-write; morph-api registers ack-only stubs so flows
+	// that use these nodes don't hang when the store service is absent.
+	SvcStoreDoc     = "store_doc"
+	StoreDocSubject = "svc.store.doc.*"
+	SvcStoreVec     = "store_vec"
+	StoreVecSubject = "svc.store.vec.*"
+	SvcContinueAt   = "continue_at"
+	ContinueSubj    = "svc.continue.at"
 )
 
 // InitInflowConnection connects to the inflow runtime, wiring the backend
@@ -59,6 +68,39 @@ func LoadSvcNodehandlers(store repository.Store) error {
 		return fmt.Errorf("failed to create hitl service node : %v", err)
 	}
 	fmt.Println("New SVC handler registered On  ", svcHandler.SvcTopic(HitlSubject).ConvertToSubscribe())
+
+	// Document / vector store services. inflo-fusion owns the real read-write; we
+	// register ack-only stubs so a flow using a Doc/Vector Store node completes
+	// rather than timing out when no store service is connected.
+	// TODO: implement real search / upsert (delegated to inflo-fusion).
+	for _, s := range []struct {
+		name    string
+		subject string
+	}{
+		{SvcStoreDoc, StoreDocSubject},
+		{SvcStoreVec, StoreVecSubject},
+	} {
+		s := s
+		if err := svcHandler.ImplHandlerOnSubject(s.name, svcHandler.SvcTopic(s.subject), func(header nats.Header, data []byte) ([]byte, error) {
+			subject := header.Get("recv_subject")
+			fmt.Printf("store svc stub: %s data=%s\n", subject, string(data))
+			return []byte(`{"status":"accepted","items":[]}`), nil
+		}); err != nil {
+			return fmt.Errorf("failed to create %s service node : %v", s.name, err)
+		}
+		fmt.Println("New SVC handler registered On  ", svcHandler.SvcTopic(s.subject).ConvertToSubscribe())
+	}
+
+	// Continue-After: park-and-resume at a scheduled time. Ack-only stub for now.
+	// TODO: record a scheduled process (StartWorkflow with ScheduledAt) whose
+	// virtual start node resumes the captured `nextNodes`.
+	if err := svcHandler.ImplHandlerOnSubject(SvcContinueAt, svcHandler.SvcTopic(ContinueSubj), func(header nats.Header, data []byte) ([]byte, error) {
+		fmt.Printf("continue.at svc stub: data=%s\n", string(data))
+		return []byte(`{"status":"scheduled"}`), nil
+	}); err != nil {
+		return fmt.Errorf("failed to create continue service node : %v", err)
+	}
+	fmt.Println("New SVC handler registered On  ", svcHandler.SvcTopic(ContinueSubj).ConvertToSubscribe())
 
 	// Subscribe to the engine's event log so finished runs close their process
 	// rows. Non-fatal: the CRUD + launch paths keep working without it.
