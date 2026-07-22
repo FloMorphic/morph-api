@@ -32,7 +32,12 @@ func loadHandlers() {
 			fmt.Printf("wslog: client connected (%s)\n", ep.Kws.GetStringAttribute("sessId"))
 		})
 		socketio.On(socketio.EventDisconnect, func(ep *socketio.EventPayload) {
+			dropConn(ep.Kws)
 			fmt.Printf("wslog: client disconnected (%s)\n", ep.Kws.GetStringAttribute("sessId"))
+		})
+		// Server-side close does not fire EventDisconnect; drop the conn here too.
+		socketio.On(socketio.EventClose, func(ep *socketio.EventPayload) {
+			dropConn(ep.Kws)
 		})
 	})
 }
@@ -48,6 +53,7 @@ func Register(app fiber.Router) {
 func wshandler(kws *socketio.Websocket) {
 	sessID := kws.Params("id")
 	kws.SetAttribute("sessId", sessID)
+	trackConn(kws) // enables named-event broadcasts (see notify.go)
 
 	welcome, _ := json.Marshal(fmt.Sprintf("connected: %s", sessID))
 	kws.Emit(welcome, socketio.TextMessage)

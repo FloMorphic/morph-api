@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FloMorphic/morph-api/api/wslog"
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
 	fuse "github.com/Inflowenger/inflow-fusion/inflow"
@@ -123,10 +124,14 @@ func (s *Scheduler) dispatchDue(ctx context.Context) {
 			rec.Error = err.Error()
 			rec.FinishedAt = nowMillis()
 			_ = s.store.Processes().Update(ctx, rec)
+			wslog.Notify(wslog.LevelError, "Scheduled run failed",
+				fmt.Sprintf("Flow %s could not start: %v", rec.FlowID, err))
 			continue
 		}
 		fmt.Printf("scheduler: launched %d (pid=%s flow=%s node=%s) scheduled for %d\n",
 			rec.IndexID, rec.PID, rec.FlowID, rec.StartNodeID, rec.ScheduledAt)
+		wslog.Notify(wslog.LevelSuccess, "Scheduled run started",
+			fmt.Sprintf("Flow %s started at node %s", rec.FlowID, rec.StartNodeID))
 	}
 }
 
