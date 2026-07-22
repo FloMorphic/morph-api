@@ -120,7 +120,9 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 	}
 
 	if params.ScheduledAt > 0 {
-		// Recorded, not dispatched — a scheduler launches it at ScheduledAt.
+		// Recorded, not dispatched — wake the scheduler so it re-arms its timer
+		// in case this row is now the nearest one.
+		notifyScheduler()
 		return rec, nil
 	}
 

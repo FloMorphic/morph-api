@@ -150,6 +150,14 @@ type ProcessRepository interface {
 	// proc.finish event (which carries only the pid) resolves the exact row to
 	// close, since only one row per pid is ever `running` at a time.
 	GetRunningByPID(ctx context.Context, pid string) (*models.Process, error)
+	// NextScheduled returns the `scheduled` row with the smallest ScheduledAt,
+	// or ErrNotFound when nothing is waiting. The scheduler arms its timer from
+	// it — the table (ordered by the scheduled index) is the priority queue.
+	NextScheduled(ctx context.Context) (*models.Process, error)
+	// ListDueScheduled returns every `scheduled` row whose ScheduledAt has been
+	// reached (<= now, epoch millis), soonest first — the batch the scheduler
+	// dispatches when its timer fires.
+	ListDueScheduled(ctx context.Context, now int64) ([]models.Process, error)
 }
 
 // ExtensionRepository is CRUD for palette extensions (ExtensionRecord) — the

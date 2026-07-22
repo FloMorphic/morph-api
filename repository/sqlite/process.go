@@ -125,6 +125,33 @@ func (r *processRepo) GetRunningByPID(ctx context.Context, pid string) (*models.
 	return processFromRow(row)
 }
 
+func (r *processRepo) NextScheduled(ctx context.Context) (*models.Process, error) {
+	row, err := r.q.GetNextScheduledProcess(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, repository.ErrNotFound
+		}
+		return nil, err
+	}
+	return processFromRow(row)
+}
+
+func (r *processRepo) ListDueScheduled(ctx context.Context, now int64) ([]models.Process, error) {
+	rows, err := r.q.ListDueScheduledProcesses(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]models.Process, 0, len(rows))
+	for _, row := range rows {
+		rec, err := processFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *rec)
+	}
+	return items, nil
+}
+
 func (r *processRepo) List(ctx context.Context, p repository.ListParams) ([]models.Process, int64, error) {
 	limit := clampLimit(p.Limit)
 	total, err := r.q.CountProcesses(ctx, sqlcgen.CountProcessesParams{

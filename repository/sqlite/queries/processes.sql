@@ -23,6 +23,17 @@ WHERE (@search = '' OR pid LIKE '%' || @search || '%' OR flow_id LIKE '%' || @se
   AND (@pid = '' OR pid = @pid)
   AND (@flow_id = '' OR flow_id = @flow_id);
 
+-- name: GetNextScheduledProcess :one
+SELECT * FROM processes
+WHERE status = 'scheduled'
+ORDER BY scheduled_at ASC, index_id ASC
+LIMIT 1;
+
+-- name: ListDueScheduledProcesses :many
+SELECT * FROM processes
+WHERE status = 'scheduled' AND scheduled_at <= @now
+ORDER BY scheduled_at ASC, index_id ASC;
+
 -- name: InsertProcess :execresult
 INSERT INTO processes (
     pid, flow_id, context_id, start_node_id, status, resource_url,

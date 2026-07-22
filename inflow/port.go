@@ -2,7 +2,6 @@ package inflow
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/FloMorphic/morph-api/env"
 	"github.com/FloMorphic/morph-api/inflow/svc"
@@ -46,17 +45,6 @@ func InitInflowConnection(store repository.Store) error {
 // live in the inflow/svc package (HITL, doc store, vector store + embedding) so
 // this stays a readable registration list.
 func LoadSvcNodehandlers(store repository.Store) error {
-	svc_sub1 := "svc.add.issue.{TABLE_NAME}"
-	err := svcHandler.ImplHandlerOnSubject("exports_db", svcHandler.SvcTopic(svc_sub1), func(header nats.Header, data []byte) ([]byte, error) {
-		subject := header.Get("recv_subject")
-		fmt.Printf("recieved Message On Subject %s with data %s\n", subject, string(data))
-		table := strings.Split(subject, ".")[3]
-		return []byte(fmt.Sprintf(`{"status":"saved successfully on %s table"}`, table)), nil
-	})
-	if err != nil {
-		return fmt.Errorf("failed to create service node : %v", err)
-	}
-	fmt.Println("New SVC handler registered On  ", svcHandler.SvcTopic(svc_sub1).ConvertToSubscribe())
 
 	// Human-in-the-Loop: when a workflow reaches a `humanInLoop` node the engine
 	// publishes here. svc.HandleHumanTask records the task (pid / flowId / nodeId /

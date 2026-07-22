@@ -49,6 +49,37 @@ func (q *Queries) DeleteProcess(ctx context.Context, indexID int64) (int64, erro
 	return result.RowsAffected()
 }
 
+const getNextScheduledProcess = `-- name: GetNextScheduledProcess :one
+SELECT index_id, pid, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
+WHERE status = 'scheduled'
+ORDER BY scheduled_at ASC, index_id ASC
+LIMIT 1
+`
+
+func (q *Queries) GetNextScheduledProcess(ctx context.Context) (Process, error) {
+	row := q.db.QueryRowContext(ctx, getNextScheduledProcess)
+	var i Process
+	err := row.Scan(
+		&i.IndexID,
+		&i.Pid,
+		&i.FlowID,
+		&i.ContextID,
+		&i.StartNodeID,
+		&i.Status,
+		&i.ResourceUrl,
+		&i.Request,
+		&i.Meta,
+		&i.Error,
+		&i.ScheduledAt,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.DurationMs,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getProcess = `-- name: GetProcess :one
 SELECT index_id, pid, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes WHERE index_id = ?1
 `
@@ -156,6 +187,52 @@ func (q *Queries) InsertProcess(ctx context.Context, arg InsertProcessParams) (s
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
+}
+
+const listDueScheduledProcesses = `-- name: ListDueScheduledProcesses :many
+SELECT index_id, pid, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
+WHERE status = 'scheduled' AND scheduled_at <= ?1
+ORDER BY scheduled_at ASC, index_id ASC
+`
+
+func (q *Queries) ListDueScheduledProcesses(ctx context.Context, now int64) ([]Process, error) {
+	rows, err := q.db.QueryContext(ctx, listDueScheduledProcesses, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Process{}
+	for rows.Next() {
+		var i Process
+		if err := rows.Scan(
+			&i.IndexID,
+			&i.Pid,
+			&i.FlowID,
+			&i.ContextID,
+			&i.StartNodeID,
+			&i.Status,
+			&i.ResourceUrl,
+			&i.Request,
+			&i.Meta,
+			&i.Error,
+			&i.ScheduledAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.DurationMs,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listProcesses = `-- name: ListProcesses :many

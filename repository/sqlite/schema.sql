@@ -148,6 +148,7 @@ CREATE INDEX IF NOT EXISTS idx_node_settings_updated_at ON node_settings (update
 CREATE INDEX IF NOT EXISTS idx_node_settings_node ON node_settings (node_uniq_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_processes_updated_at ON processes (updated_at DESC, index_id DESC);
 CREATE INDEX IF NOT EXISTS idx_processes_pid ON processes (pid, status);
+CREATE INDEX IF NOT EXISTS idx_processes_scheduled ON processes (status, scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_extensions_updated_at ON extensions (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_extensions_kind ON extensions (kind, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_extensions_builtin_name ON extensions (kind, name);

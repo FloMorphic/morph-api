@@ -1,5 +1,6 @@
 package main
 import (
+	"context"
 	"fmt"
 
 	apiHandlers "github.com/FloMorphic/morph-api/api"
@@ -32,6 +33,12 @@ func main() {
 		fmt.Printf("warning: inflow runtime not connected: %v\n", err)
 	} else if err := inflow.LoadSvcNodehandlers(store); err != nil {
 		fmt.Printf("warning: inflow service handlers not loaded: %v\n", err)
+	} else {
+		// Scheduler: launches `scheduled` process rows (Continue After resumes)
+		// when their time arrives. Timer-armed on the nearest row, woken when a
+		// new one is recorded; its first pass catches rows that came due while
+		// the app was down. Needs the runtime, so it lives in this branch.
+		inflow.StartScheduler(context.Background(), store)
 	}
 
 	app := fiber.New(fiber.Config{
