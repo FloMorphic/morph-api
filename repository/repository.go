@@ -37,25 +37,28 @@ type ListParams struct {
 	Kind string
 }
 
-// WorkflowRepository is CRUD for saved workflows (FlowRecord).
-type WorkflowRepository interface {
-	// Upsert inserts or updates a workflow. On insert (empty ID) it assigns an
+// CRUD is the shared persistence contract for entities keyed by a string id
+// with upsert semantics and paginated listing. Entity repositories that are
+// plain CRUD alias an instantiation of it; those with extra methods embed it.
+// Memory and Process stay outside it on purpose: Memory has no pagination and
+// splits Create from its document/vector ops, and Process is keyed by an
+// auto-increment int64 with a Create/Update split.
+type CRUD[T any] interface {
+	// Upsert inserts or updates the entity. On insert (empty ID) it assigns an
 	// ID and CreatedAt; on update it preserves the original CreatedAt.
-	Upsert(ctx context.Context, w *models.FlowRecord) error
-	GetByID(ctx context.Context, id string) (*models.FlowRecord, error)
+	Upsert(ctx context.Context, v *T) error
+	GetByID(ctx context.Context, id string) (*T, error)
 	// List returns a page ordered newest-first plus the total number of rows
-	// matching the search (across all pages).
-	List(ctx context.Context, p ListParams) (items []models.FlowRecord, total int64, err error)
+	// matching the filters (across all pages).
+	List(ctx context.Context, p ListParams) (items []T, total int64, err error)
 	Delete(ctx context.Context, id string) error
 }
 
+// WorkflowRepository is CRUD for saved workflows (FlowRecord).
+type WorkflowRepository = CRUD[models.FlowRecord]
+
 // ContextRepository is CRUD for context documents (ContextRecord).
-type ContextRepository interface {
-	Upsert(ctx context.Context, c *models.ContextRecord) error
-	GetByID(ctx context.Context, id string) (*models.ContextRecord, error)
-	List(ctx context.Context, p ListParams) (items []models.ContextRecord, total int64, err error)
-	Delete(ctx context.Context, id string) error
-}
+type ContextRepository = CRUD[models.ContextRecord]
 
 // MemoryRepository is CRUD for memory stores (MemoryStore). Vector stores also
 // carry a backing similarity index the implementation provisions/drops here.
@@ -100,12 +103,7 @@ type MemoryRepository interface {
 }
 
 // PromptRepository is CRUD for prompt templates (PromptRecord).
-type PromptRepository interface {
-	Upsert(ctx context.Context, p *models.PromptRecord) error
-	GetByID(ctx context.Context, id string) (*models.PromptRecord, error)
-	List(ctx context.Context, params ListParams) (items []models.PromptRecord, total int64, err error)
-	Delete(ctx context.Context, id string) error
-}
+type PromptRepository = CRUD[models.PromptRecord]
 
 // HumanTaskRepository is CRUD for Human-in-the-Loop tasks (HumanTask).
 //
@@ -114,10 +112,7 @@ type PromptRepository interface {
 // workflow reaches a `humanInLoop` node. The API exposes reads, the answer /
 // message / close actions, and delete.
 type HumanTaskRepository interface {
-	Upsert(ctx context.Context, t *models.HumanTask) error
-	GetByID(ctx context.Context, id string) (*models.HumanTask, error)
-	List(ctx context.Context, p ListParams) (items []models.HumanTask, total int64, err error)
-	Delete(ctx context.Context, id string) error
+	CRUD[models.HumanTask]
 	// Answer records an answer to a single question, flipping the task to
 	// `answered` once every question has an answer. Returns the updated task.
 	Answer(ctx context.Context, id, questionID, answer string) (*models.HumanTask, error)
@@ -131,12 +126,7 @@ type HumanTaskRepository interface {
 // NodeSettingRepository is CRUD for node settings profiles (NodeSetting). The
 // list accepts an optional NodeUniqID filter (via ListParams) so the node drawer
 // can fetch just that node's profiles.
-type NodeSettingRepository interface {
-	Upsert(ctx context.Context, s *models.NodeSetting) error
-	GetByID(ctx context.Context, id string) (*models.NodeSetting, error)
-	List(ctx context.Context, p ListParams) (items []models.NodeSetting, total int64, err error)
-	Delete(ctx context.Context, id string) error
-}
+type NodeSettingRepository = CRUD[models.NodeSetting]
 
 // ProcessRepository is CRUD for process runs (Process). Rows are written by the
 // inflow layer when a process request is sent and closed out from the engine's
@@ -170,10 +160,7 @@ type ProcessRepository interface {
 // builtin definitions idempotently (keyed by name), leaving existing rows and
 // admin edits untouched.
 type ExtensionRepository interface {
-	Upsert(ctx context.Context, e *models.ExtensionRecord) error
-	GetByID(ctx context.Context, id string) (*models.ExtensionRecord, error)
-	List(ctx context.Context, p ListParams) (items []models.ExtensionRecord, total int64, err error)
-	Delete(ctx context.Context, id string) error
+	CRUD[models.ExtensionRecord]
 	// SeedBuiltins inserts any builtin in defs that is not already present
 	// (matched by name). It never overwrites an existing builtin, so admin edits
 	// survive restarts. Returns the number of rows inserted.
