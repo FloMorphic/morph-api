@@ -21,15 +21,25 @@ func Register(api fiber.Router, store repository.Store) {
 	ctl := &controller{repo: store.Extensions()}
 
 	g := api.Group("/extension")
-	g.Post("", ctl.upsert)                              // create (no id) or update
-	g.Get("", ctl.list)                                 // list (?page=&per_page=&search=&kind=)
-	g.Get("/extrinsics", ctl.extrinsics)                // backend extrinsic services to bind to
-	g.Get("/id/:id", ctl.getByID)                       // open one extension
-	g.Delete("/id/:id", ctl.deleteByID)                 // delete
-	g.Get("/id/:id/intro", ctl.intro)                   // live: plugin @intro
-	g.Get("/id/:id/settings", ctl.settings)             // live: plugin @settings form
-	g.Get("/id/:id/actions", ctl.actions)               // live: plugin @actions list
+	g.Post("", ctl.upsert)                  // create (no id) or update
+	g.Get("", ctl.list)                     // list (?page=&per_page=&search=&kind=)
+	g.Get("/extrinsics", ctl.extrinsics)    // backend extrinsic services to bind to
+	g.Get("/id/:id", ctl.getByID)           // open one extension
+	g.Delete("/id/:id", ctl.deleteByID)     // delete
+	g.Get("/id/:id/intro", ctl.intro)       // live: plugin @intro
+	g.Get("/id/:id/settings", ctl.settings) // live: plugin @settings form
+	g.Get("/id/:id/actions", ctl.actions)   // live: plugin @actions list
+
 	g.Get("/id/:id/actions/:method/form", ctl.actionForm) // live: one action's @form
+
+	// Live REST->inflowv1 shim: POST a body to one of a plugin's methods (an
+	// action or a metaFunc, e.g. the MCP node's getToolsList) and get its raw
+	// response. Here `:id` is the plugin's inflowv1 PluginID *directly* (e.g. the
+	// builtin MCP node's hard-coded seed id), not an extension row — no DB lookup.
+	// The MCP "load tools" button POSTs {url, transport, auth} to
+	// `/id/<mcpPluginId>/getToolsList`. Registered last so the more specific GETs
+	// above win their paths.
+	g.Post("/id/:id/:fn", ctl.callPluginFn) // live: call plugin inflow.v1.<id>.<fn>
 
 	// Plugins: mint a runtime credential for a plugin-backed node (builtin
 	// llm/mcp/cast carry a hard-coded pluginId from the seed) so its inflowv1

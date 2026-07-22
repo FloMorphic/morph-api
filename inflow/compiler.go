@@ -302,7 +302,7 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 			body = map[string]any{}
 		}
 		// Carry node-kind-specific config into the plugin body.
-		for _, k := range []string{"functions", "url", "auth", "transport", "mappings", "storeId"} {
+		for _, k := range []string{"functions", "url", "auth", "transport", "mappings", "storeId", "mcpMode"} {
 			if v, ok := nodeData[k]; ok {
 				body[k] = v
 			}
@@ -379,7 +379,7 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 		evNode := inflowNodes.NewExtrinsicSvcNode(ContinueSubject, inflowNodes.WithUniqId[*inflowNodes.ExtrinsicSvcNode](vfn.ID))
 		evNode.ExtrinsicRule.ReqTimeoutSecound = 10
 		mode := getStr(nodeData, "mode")
-		payload := map[string]any{"nodeId": vfn.ID, "mode": mode}
+		payload := map[string]any{"mode": mode}
 		switch {
 		case mode == "at":
 			payload["at"] = getStr(nodeData, "at")

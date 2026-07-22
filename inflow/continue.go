@@ -18,7 +18,6 @@ import (
 // ContinueAt (epoch millis), and a relative delay becomes DelaySeconds. Exactly
 // one is non-zero for a well-formed node.
 type continuePayload struct {
-	NodeID       string `json:"nodeId"`
 	Mode         string `json:"mode"`
 	At           string `json:"at"`
 	ContinueAt   int64  `json:"continueAt"`   // absolute epoch millis (mode "at")
@@ -39,13 +38,13 @@ func HandleContinueAfter(store repository.Store, header nats.Header, data []byte
 	body := parseExtRequest(data)
 	op := decodeContinueOp(body.OperationData)
 
-	// Identity travels on the runtime headers (as it does for HITL), falling back
-	// to the compile-time payload for the nodeId.
+	// Identity travels on the runtime headers (as it does for HITL); the nodeId
+	// comes off the request body's Node, which the runtime always supplies.
 	flowID := header.Get("flowId")
 	contextID := header.Get("contextId")
 	pid := header.Get("pid")
-	nodeID := op.NodeID
-	if body.Node != nil && body.Node.ID != "" {
+	nodeID := ""
+	if body.Node != nil {
 		nodeID = body.Node.ID
 	}
 

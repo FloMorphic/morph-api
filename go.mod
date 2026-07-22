@@ -3,7 +3,7 @@ module github.com/FloMorphic/morph-api
 go 1.26.2
 
 require (
-	github.com/Inflowenger/inflow-fusion v0.1.7
+	github.com/Inflowenger/inflow-fusion v0.1.8
 	github.com/asg017/sqlite-vec-go-bindings v0.1.6
 	github.com/bytedance/sonic v1.15.2
 	github.com/gofiber/contrib/v3/jwt v1.1.7
@@ -51,3 +51,5 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 )
+
+replace github.com/Inflowenger/inflow-fusion => ../../inflow-fusion
