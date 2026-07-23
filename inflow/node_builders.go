@@ -222,11 +222,12 @@ func buildStoreNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData 
 	evNode := inflowNodes.NewExtrinsicSvcNode(subject)
 	evNode.ExtrinsicRule.ReqTimeoutSecound = 30
 	payload := map[string]any{"action": action}
-	// storeId/query/input/scope/key serve the doc store; text/topK serve the
-	// vector store (the text to embed and how many neighbours a search returns);
+	// storeId/query/input/key serve the doc store; text/topK serve the vector
+	// store (the text to embed and how many neighbours a search returns);
 	// partition is the vector record's namespace/tag an index stamps and a search
-	// filters on.
-	for _, k := range []string{"storeId", "query", "input", "scope", "key", "text", "topK", "partition"} {
+	// filters on. The node's scope is NOT carried: the runtime resolves it before
+	// the call and delivers the scoped object as the request's `data`.
+	for _, k := range []string{"storeId", "query", "input", "key", "text", "topK", "partition"} {
 		if v, ok := nodeData[k]; ok {
 			payload[k] = v
 		}
