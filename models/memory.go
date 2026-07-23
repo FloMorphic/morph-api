@@ -61,10 +61,13 @@ func (c *VectorMemoryConfig) SQLiteDistanceMetric() string {
 // id, its original text/metadata, and the distance to the query vector (smaller
 // is closer, per the store's metric).
 type VectorMatch struct {
-	DocID    string         `json:"docId"`
-	Content  string         `json:"content"`
-	Metadata map[string]any `json:"metadata,omitempty"`
-	Distance float64        `json:"distance"`
+	DocID string `json:"docId"`
+	// Partition is the record's partition/tag key, echoed back so a caller can
+	// see which partition a hit came from. Empty for records stored without one.
+	Partition string         `json:"partition,omitempty"`
+	Content   string         `json:"content"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	Distance  float64        `json:"distance"`
 }
 
 // TableColumn describes one column of a document store's schema.

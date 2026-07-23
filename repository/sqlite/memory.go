@@ -301,24 +301,46 @@ func (r *memoryRepo) DeleteDocument(ctx context.Context, store *models.MemorySto
 	return nil
 }
 
+// vecPartitionColumn is the vec0 metadata column that holds each record's
+// partition/tag key. It is a real (filterable) metadata column — not a `+`
+// auxiliary one — because sqlite-vec only lets a KNN query constrain metadata
+// and partition columns, so filtered top-k search needs it declared here.
+const vecPartitionColumn = "partition"
+
 // createVectorIndex creates the vec0 virtual table that stores this store's
 // embeddings. Table DDL cannot be parameterized, so the name is sanitized and
 // the dimension is a validated integer; the distance metric comes from a fixed
-// keyword set (never raw config text). Alongside the vector it keeps three
+// keyword set (never raw config text). Alongside the vector it keeps a
+// filterable `partition` metadata column (a per-record namespace/tag) plus three
 // auxiliary (unindexed) columns — the document id, its source text, and a JSON
-// metadata blob — so a search can return the original content, not just a
-// rowid.
+// metadata blob — so a search can filter by partition and return the original
+// content, not just a rowid.
 func (r *memoryRepo) createVectorIndex(ctx context.Context, id string, cfg *models.VectorMemoryConfig) error {
 	stmt := fmt.Sprintf(
 		"CREATE VIRTUAL TABLE IF NOT EXISTS %s USING vec0("+
+			"%s text, "+
 			"embedding float[%d] distance_metric=%s, "+
 			"+doc_id text, +content text, +metadata text)",
-		vecTableName(id), cfg.Dimensions, cfg.SQLiteDistanceMetric(),
+		vecTableName(id), vecPartitionColumn, cfg.Dimensions, cfg.SQLiteDistanceMetric(),
 	)
 	if _, err := r.db.ExecContext(ctx, stmt); err != nil {
 		return fmt.Errorf("sqlite: create vector index: %w", err)
 	}
 	return nil
+}
+
+// hasColumn reports whether the (already sanitized) table has a column of the
+// given name. It lets the vector index/search paths degrade gracefully on a
+// store whose vec0 table predates the `partition` column (vec0 has no ALTER, so
+// an old table cannot gain it): those stores keep working un-partitioned instead
+// of erroring on a missing column.
+func (r *memoryRepo) hasColumn(ctx context.Context, table, column string) bool {
+	rows, err := r.db.QueryContext(ctx, "SELECT 1 FROM pragma_table_info(?) WHERE name = ? LIMIT 1", table, column)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	return rows.Next()
 }
 
 // IndexVector stores one embedded vector plus its source text and metadata in
@@ -327,7 +349,7 @@ func (r *memoryRepo) createVectorIndex(ctx context.Context, id string, cfg *mode
 // sqlite-vec (which would otherwise error opaquely). The document id, text, and
 // serialized metadata are all bound as parameters — only the (sanitized) table
 // name is interpolated.
-func (r *memoryRepo) IndexVector(ctx context.Context, store *models.MemoryStore, content string, vector []float32, metadata map[string]any) (string, error) {
+func (r *memoryRepo) IndexVector(ctx context.Context, store *models.MemoryStore, content string, vector []float32, metadata map[string]any, partition string) (string, error) {
 	if store == nil || store.Type != models.MemoryVector || store.Vector == nil {
 		return "", fmt.Errorf("sqlite: index requires a vector store")
 	}
@@ -347,7 +369,17 @@ func (r *memoryRepo) IndexVector(ctx context.Context, store *models.MemoryStore,
 		metaJSON = string(b)
 	}
 	docID := repository.NewID(repository.VectorIDPrefix)
-	stmt := fmt.Sprintf("INSERT INTO %s (embedding, doc_id, content, metadata) VALUES (?, ?, ?, ?)", vecTableName(store.ID))
+	table := vecTableName(store.ID)
+	// Only write the partition column when this store's table actually has it —
+	// tables created before partitioning stay writable in un-partitioned mode.
+	if r.hasColumn(ctx, table, vecPartitionColumn) {
+		stmt := fmt.Sprintf("INSERT INTO %s (%s, embedding, doc_id, content, metadata) VALUES (?, ?, ?, ?, ?)", table, vecPartitionColumn)
+		if _, err := r.db.ExecContext(ctx, stmt, strings.TrimSpace(partition), blob, docID, content, metaJSON); err != nil {
+			return "", fmt.Errorf("sqlite: index vector: %w", err)
+		}
+		return docID, nil
+	}
+	stmt := fmt.Sprintf("INSERT INTO %s (embedding, doc_id, content, metadata) VALUES (?, ?, ?, ?)", table)
 	if _, err := r.db.ExecContext(ctx, stmt, blob, docID, content, metaJSON); err != nil {
 		return "", fmt.Errorf("sqlite: index vector: %w", err)
 	}
@@ -358,7 +390,7 @@ func (r *memoryRepo) IndexVector(ctx context.Context, store *models.MemoryStore,
 // vector, returning the k nearest matches (nearest first) with their stored
 // text and metadata. The query vector width is validated up front and k is
 // clamped so a caller can never ask for an unbounded scan.
-func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int) ([]models.VectorMatch, error) {
+func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int, partition string) ([]models.VectorMatch, error) {
 	if store == nil || store.Type != models.MemoryVector || store.Vector == nil {
 		return nil, fmt.Errorf("sqlite: search requires a vector store")
 	}
@@ -375,13 +407,33 @@ func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStor
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: serialize query vector: %w", err)
 	}
+	table := vecTableName(store.ID)
+	hasPartition := r.hasColumn(ctx, table, vecPartitionColumn)
 	// vec0 KNN: constrain with `embedding MATCH ?` and order by the virtual
-	// `distance` column; LIMIT caps the neighbourhood.
+	// `distance` column; LIMIT caps the neighbourhood. When a partition filter is
+	// asked for (and the table has the column) it is ANDed into the MATCH query so
+	// the top-k is computed within that partition, not across the whole index.
+	partition = strings.TrimSpace(partition)
+	selectCol := "''"
+	where := "embedding MATCH ?"
+	args := []any{blob}
+	if hasPartition {
+		selectCol = vecPartitionColumn
+		if partition != "" {
+			where += fmt.Sprintf(" AND %s = ?", vecPartitionColumn)
+			args = append(args, partition)
+		}
+	} else if partition != "" {
+		// The store predates partitioning: it has no partitioned records, so a
+		// partition-scoped search can only be empty.
+		return []models.VectorMatch{}, nil
+	}
+	args = append(args, k)
 	stmt := fmt.Sprintf(
-		"SELECT doc_id, content, metadata, distance FROM %s WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
-		vecTableName(store.ID),
+		"SELECT doc_id, %s, content, metadata, distance FROM %s WHERE %s ORDER BY distance LIMIT ?",
+		selectCol, table, where,
 	)
-	rows, err := r.db.QueryContext(ctx, stmt, blob, k)
+	rows, err := r.db.QueryContext(ctx, stmt, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: vector search: %w", err)
 	}
@@ -390,13 +442,13 @@ func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStor
 	out := make([]models.VectorMatch, 0, k)
 	for rows.Next() {
 		var (
-			docID, content, metaJSON string
-			distance                 float64
+			docID, part, content, metaJSON string
+			distance                       float64
 		)
-		if err := rows.Scan(&docID, &content, &metaJSON, &distance); err != nil {
+		if err := rows.Scan(&docID, &part, &content, &metaJSON, &distance); err != nil {
 			return nil, fmt.Errorf("sqlite: scan vector match: %w", err)
 		}
-		m := models.VectorMatch{DocID: docID, Content: content, Distance: distance}
+		m := models.VectorMatch{DocID: docID, Partition: part, Content: content, Distance: distance}
 		if metaJSON != "" && metaJSON != "{}" {
 			var meta map[string]any
 			if err := json.Unmarshal([]byte(metaJSON), &meta); err == nil {

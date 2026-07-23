@@ -223,8 +223,10 @@ func buildStoreNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData 
 	evNode.ExtrinsicRule.ReqTimeoutSecound = 30
 	payload := map[string]any{"action": action}
 	// storeId/query/input/scope/key serve the doc store; text/topK serve the
-	// vector store (the text to embed and how many neighbours a search returns).
-	for _, k := range []string{"storeId", "query", "input", "scope", "key", "text", "topK"} {
+	// vector store (the text to embed and how many neighbours a search returns);
+	// partition is the vector record's namespace/tag an index stamps and a search
+	// filters on.
+	for _, k := range []string{"storeId", "query", "input", "scope", "key", "text", "topK", "partition"} {
 		if v, ok := nodeData[k]; ok {
 			payload[k] = v
 		}

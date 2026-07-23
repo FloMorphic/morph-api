@@ -44,17 +44,21 @@ type documentRecord struct {
 	UpdatedAt int64          `json:"updatedAt"`
 }
 
-// vectorSearchRequest is the body of POST /memory/:id/search.
+// vectorSearchRequest is the body of POST /memory/:id/search. An optional
+// `partition` restricts the search to records stored under that partition/tag.
 type vectorSearchRequest struct {
-	Text string `json:"text"`
-	TopK int    `json:"topK"`
+	Text      string `json:"text"`
+	TopK      int    `json:"topK"`
+	Partition string `json:"partition"`
 }
 
 // vectorIndexRequest is the body of POST /memory/:id/vectors: the text to embed
-// plus optional key/value metadata stored alongside so a search can return it.
+// plus optional key/value metadata stored alongside so a search can return it,
+// and an optional `partition` (a namespace/tag) a search can later filter on.
 type vectorIndexRequest struct {
-	Text     string         `json:"text"`
-	Metadata map[string]any `json:"metadata"`
+	Text      string         `json:"text"`
+	Metadata  map[string]any `json:"metadata"`
+	Partition string         `json:"partition"`
 }
 
 // docStore resolves :id and asserts it is a document store, writing the failure
@@ -180,7 +184,7 @@ func (ctl *controller) searchVectors(c fiber.Ctx) error {
 	if err != nil {
 		return etc.Fail(c, fiber.StatusBadGateway, err.Error())
 	}
-	matches, err := ctl.repo.SearchVectors(c.Context(), rec, vector, req.TopK)
+	matches, err := ctl.repo.SearchVectors(c.Context(), rec, vector, req.TopK, strings.TrimSpace(req.Partition))
 	if err != nil {
 		return etc.Fail(c, fiber.StatusInternalServerError, err.Error())
 	}
@@ -205,7 +209,7 @@ func (ctl *controller) indexVector(c fiber.Ctx) error {
 	if err != nil {
 		return etc.Fail(c, fiber.StatusBadGateway, err.Error())
 	}
-	id, err := ctl.repo.IndexVector(c.Context(), rec, req.Text, vector, req.Metadata)
+	id, err := ctl.repo.IndexVector(c.Context(), rec, req.Text, vector, req.Metadata, strings.TrimSpace(req.Partition))
 	if err != nil {
 		return etc.Fail(c, fiber.StatusInternalServerError, err.Error())
 	}

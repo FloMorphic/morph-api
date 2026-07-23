@@ -2,11 +2,13 @@ package svc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
+	inflowModels "github.com/Inflowenger/inflow-fusion/models"
 	"github.com/bytedance/sonic"
 	"github.com/nats-io/nats.go"
 )
@@ -15,16 +17,19 @@ import (
 // node references plus the action-specific fields the compiler carried. A doc
 // store uses `query` (a read's SQL) and `input` (a write's object); a vector
 // store uses `text` (the text to embed for an index or a search) and `topK`
-// (how many neighbours a search returns).
+// (how many neighbours a search returns). A vector index/search may also carry a
+// `partition` — a per-record namespace/tag an index stamps on the record and a
+// search restricts its top-k to.
 type storeRequest struct {
-	Action  string `json:"action"`
-	StoreID string `json:"storeId"`
-	Query   string `json:"query"`
-	Input   any    `json:"input"`
-	Scope   string `json:"scope"`
-	Key     string `json:"key"`
-	Text    string `json:"text"`
-	TopK    int    `json:"topK"`
+	Action    string `json:"action"`
+	StoreID   string `json:"storeId"`
+	Query     string `json:"query"`
+	Input     any    `json:"input"`
+	Scope     string `json:"scope"`
+	Key       string `json:"key"`
+	Text      string `json:"text"`
+	TopK      int    `json:"topK"`
+	Partition string `json:"partition"`
 }
 
 // HandleDocStore serves svc.store.doc.{read,write}. It resolves the referenced
@@ -66,11 +71,35 @@ func HandleDocStore(store repository.Store, header nats.Header, data []byte) ([]
 		resp, _ := sonic.Marshal(map[string]any{"status": "ok", "count": len(rows), "items": rows})
 		return resp, nil
 	case "write":
-		id, err := store.Memory().WriteDocument(context.Background(), rec, documentPayload(req, body.Data))
+		// The value to store is the node-scoped object (e.g. `$.b`). A write
+		// returns the id it saved under, which the runtime places back into that
+		// scoped object under the node's key; on a re-run that id rides in as
+		// `scope[key]`. So a re-run of the same node updates the row it created
+		// before instead of inserting a duplicate — this is an upsert keyed on the
+		// prior run's returned id.
+		doc := documentPayload(req, body.Data)
+		key := firstNonEmpty(req.Key, nodeKey(body.Node))
+		// Persist the user's data only: drop the node's own result wrapper the
+		// runtime merged back under `key`, so successive updates don't accrete our
+		// bookkeeping into the stored document.
+		stored := storableDoc(doc, key)
+		if prevID := priorDocID(key, doc); prevID != "" {
+			err := store.Memory().UpdateDocument(context.Background(), rec, prevID, stored)
+			switch {
+			case err == nil:
+				resp, _ := sonic.Marshal(map[string]any{"status": "ok", "id": prevID, "op": "update"})
+				return resp, nil
+			case !errors.Is(err, repository.ErrNotFound):
+				return nil, fmt.Errorf("doc store write (update %q): %w", prevID, err)
+			}
+			// ErrNotFound: the carried id no longer resolves to a row — fall
+			// through and insert a fresh document.
+		}
+		id, err := store.Memory().WriteDocument(context.Background(), rec, stored)
 		if err != nil {
 			return nil, fmt.Errorf("doc store write: %w", err)
 		}
-		resp, _ := sonic.Marshal(map[string]any{"status": "ok", "id": id})
+		resp, _ := sonic.Marshal(map[string]any{"status": "ok", "id": id, "op": "insert"})
 		return resp, nil
 	default:
 		return nil, fmt.Errorf("doc store: unsupported action %q", action)
@@ -116,11 +145,12 @@ func HandleVecStore(store repository.Store, header nats.Header, data []byte) ([]
 		if err != nil {
 			return nil, fmt.Errorf("vector store %s: %w", action, err)
 		}
-		id, err := store.Memory().IndexVector(ctx, rec, text, vector, vecMetadata(req, scoped))
+		partition := vecPartition(req, scoped)
+		id, err := store.Memory().IndexVector(ctx, rec, text, vector, vecMetadata(req, scoped), partition)
 		if err != nil {
 			return nil, fmt.Errorf("vector store %s: %w", action, err)
 		}
-		resp, _ := sonic.Marshal(map[string]any{"status": "ok", "id": id})
+		resp, _ := sonic.Marshal(map[string]any{"status": "ok", "id": id, "partition": partition})
 		return resp, nil
 	case "read", "search", "query", "similar":
 		query := firstNonEmpty(req.Text, req.Query)
@@ -131,7 +161,7 @@ func HandleVecStore(store repository.Store, header nats.Header, data []byte) ([]
 		if err != nil {
 			return nil, fmt.Errorf("vector store %s: %w", action, err)
 		}
-		matches, err := store.Memory().SearchVectors(ctx, rec, vector, req.TopK)
+		matches, err := store.Memory().SearchVectors(ctx, rec, vector, req.TopK, vecPartition(req, scopedDataMap(body.Data)))
 		if err != nil {
 			return nil, fmt.Errorf("vector store %s: %w", action, err)
 		}
@@ -160,6 +190,22 @@ func vecIndexText(req storeRequest, scoped map[string]any) string {
 	return ""
 }
 
+// vecPartition resolves the partition/tag key for an index or search: an
+// explicit `partition` on the node payload, else a `partition`/`namespace`/`tag`
+// string on the live scoped data. Returns "" (un-partitioned / unfiltered) when
+// none is present.
+func vecPartition(req storeRequest, scoped map[string]any) string {
+	if s := strings.TrimSpace(req.Partition); s != "" {
+		return s
+	}
+	for _, k := range []string{"partition", "namespace", "tag"} {
+		if s, ok := scoped[k].(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
+}
+
 // vecMetadata is the object stored alongside an indexed vector so a later search
 // can return the original record: the node's `input` object when it is one,
 // otherwise the flow's live scoped data.
@@ -168,6 +214,63 @@ func vecMetadata(req storeRequest, scoped map[string]any) map[string]any {
 		return obj
 	}
 	return scoped
+}
+
+// nodeKey returns the compiled node's key (where the runtime places this node's
+// result in the scoped data), or "" when the node isn't carried on the envelope.
+func nodeKey(node *inflowModels.Node) string {
+	if node == nil {
+		return ""
+	}
+	return node.Key
+}
+
+// priorDocID recovers the id a previous run of this write node saved under, so a
+// re-run updates that row instead of inserting a duplicate. A write returns its
+// id in the node result, which the runtime merges back into the scoped object
+// under the node's `key`; on the next run that wrapper arrives as `doc[key]` —
+// either a bare id string or the result object carrying `id`/`_id`. Returns ""
+// when the object was never saved (first run) or no key is configured.
+func priorDocID(key string, doc map[string]any) string {
+	key = strings.TrimSpace(key)
+	if key == "" || doc == nil {
+		return ""
+	}
+	switch v := doc[key].(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case map[string]any:
+		for _, idKey := range []string{"id", "_id"} {
+			if s, ok := v[idKey].(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
+}
+
+// storableDoc returns the document to persist with the node's own result wrapper
+// removed: `doc[key]` is where the runtime merged this node's previous result
+// (the {status,id} object), which is bookkeeping, not the user's data. Dropping
+// it keeps stored documents to the scoped payload and stops updates from nesting
+// prior results. The input map is never mutated; when there is nothing to strip
+// the original is returned unchanged.
+func storableDoc(doc map[string]any, key string) map[string]any {
+	key = strings.TrimSpace(key)
+	if key == "" || doc == nil {
+		return doc
+	}
+	if _, ok := doc[key]; !ok {
+		return doc
+	}
+	out := make(map[string]any, len(doc))
+	for k, v := range doc {
+		if k == key {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // documentPayload derives the JSON object a write should store. When the node's
