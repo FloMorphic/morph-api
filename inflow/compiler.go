@@ -2,13 +2,10 @@ package inflow
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/FloMorphic/morph-api/models"
 	compiler "github.com/Inflowenger/inflow-fusion/compilers/vueFlow"
 	inflowModels "github.com/Inflowenger/inflow-fusion/models"
-	inflowNodes "github.com/Inflowenger/inflow-fusion/nodes"
-	"github.com/Inflowenger/inflow-fusion/svcHandler"
 )
 
 /*
@@ -31,11 +28,12 @@ const items: PaletteItem[] = [
 */
 const (
 	// Legacy / generic inflow node kinds still handled by the compiler.
-	NODE_PLUGIN   = "pluginNative"
+	// just void , contract, goto , nativley comes from inflow , others compiled to inflow native 
+	// NODE_PLUGIN   = "pluginNative"
 	NODE_VOID     = "void"
 	NODE_CONTRACT = "contract"
-	NODE_CODE     = "code"
-	NODE_EXT_SVC  = "extrinsic"
+	// NODE_CODE     = "code"
+	// NODE_EXT_SVC  = "extrinsic"
 	NODE_GOTO     = "goto"
 
 	// FloMorphic builtin morphic types (see models/extension.go). Each lowers to
@@ -120,77 +118,9 @@ func inboundSources(flow compiler.VueFlow, nodeId string) []string {
 	return out
 }
 
-// getStr reads a string field defensively (empty string when absent/other type).
-func getStr(data map[string]any, key string) string {
-	if v, ok := data[key].(string); ok {
-		return v
-	}
-	return ""
-}
-
-// getFloat reads a numeric field defensively. JSON-decoded node data carries
-// numbers as float64; a string is parsed as a fallback (empty/other type → 0).
-func getFloat(data map[string]any, key string) float64 {
-	switch v := data[key].(type) {
-	case float64:
-		return v
-	case int64:
-		return float64(v)
-	case int:
-		return float64(v)
-	case string:
-		var f float64
-		if _, err := fmt.Sscanf(v, "%g", &f); err == nil {
-			return f
-		}
-	}
-	return 0
-}
-
-// delayModeSeconds maps a Continue After delay unit to seconds. An unknown mode
-// (including the "at" absolute mode and legacy "delay") returns 0.
-func delayModeSeconds(mode string) int64 {
-	switch mode {
-	case "seconds":
-		return 1
-	case "minutes":
-		return 60
-	case "hour":
-		return 3600
-	case "day":
-		return 86400
-	}
-	return 0
-}
-
-// parseAtMillis parses a Continue After absolute "at" value into epoch millis,
-// accepting the browser datetime-local shape ("2006-01-02T15:04"[":05"]) and
-// full RFC3339. It returns 0 when the value is blank or unparseable, leaving the
-// handler to fall back to (or surface) a missing schedule.
-func parseAtMillis(at string) int64 {
-	if at == "" {
-		return 0
-	}
-	layouts := []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04"}
-	for _, l := range layouts {
-		if t, err := time.Parse(l, at); err == nil {
-			return t.UnixMilli()
-		}
-	}
-	return 0
-}
-
-// pluginUniqId is the identity a plugin node is registered under. It must match
-// the backing extension-table row (stamped onto the node data as `extensionId`
-// by the front end when a node is dropped from the palette). Falls back to the
-// node's own id so a standalone / unstamped node still gets a stable identity.
-func pluginUniqId(data map[string]any, nodeID string) string {
-	if id := getStr(data, "extensionId"); id != "" {
-		return id
-	}
-	return nodeID
-}
-
+// NodeBuilder is the per-node compile hook: it scaffolds the inflow node
+// (id / title / key / scope) and dispatches the type-specific population to the
+// buildXxx functions in node_builders.go.
 func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 
 	nodeData, ok := vfn.Data.(map[string]any)
@@ -208,193 +138,34 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 		node.Scope = nodeData["scope"].(string)
 
 	}
+	var err error
 	switch vfn.Type {
-	case NODE_START, NODE_PROMISEALL:
-		// Start marker and the fan-in join both lower to a Void node. A
+	case NODE_START, NODE_PROMISEALL, NODE_VOID:
+		// Start marker, the fan-in join and void all lower to a Void node. A
 		// promissall's `depends` (all inbound nodes) is filled by a post-pass in
 		// FLowCompiler, which has the flow's edges.
 		node.Type = inflowModels.VoidNodeType
 	case NODE_JS, NODE_OPA:
-		// JS / OPA nodes both lower to a Code node; the `lang` field on the data
-		// selects the variant (js / opa).
-		node.Type = inflowModels.CodeNodeType
-
-		if lang, ok := nodeData["lang"].(string); ok {
-			if lang == string(inflowModels.JavaScriptLang) {
-				newJsNode := inflowNodes.NewJsNode(nodeData["logic_rule"].(string))
-				node.Code = &newJsNode.CodeRule
-			} else if lang == string(inflowModels.OPALang) {
-				criteria := map[string]any{}
-				if conds, ok := nodeData["conditions"].([]any); ok {
-					for _, el := range conds {
-						if field, ok := el.(map[string]any); ok {
-							criteria[field["key"].(string)] = field["value"]
-						}
-					}
-				}
-				newOpaNode := inflowNodes.NewOpaNode(
-					nodeData["logic_rule"].(string),
-					nodeData["opa_result"].(string),
-					inflowNodes.WithCriteriaData(criteria),
-				)
-				node.Code = &newOpaNode.CodeRule
-			}
-
-		}
-
+		err = buildCodeNode(&node, vfn, nodeData)
 	case NODE_CONTRACT, NODE_RULE:
-		// Rule → a Contract; its handlers drive the routed outbound edges.
-		node.Type = inflowModels.RuleNodeType
-
-		criteria := map[string]any{}
-		if conds, ok := nodeData["conditions"].([]any); ok {
-			for _, el := range conds {
-				if field, ok := el.(map[string]any); ok {
-					criteria[field["key"].(string)] = field["value"]
-				}
-			}
-		}
-		if lang, ok := nodeData["lang"].(string); ok {
-			if lang == string(inflowModels.JavaScriptLang) { //js lang
-				newContract := inflowNodes.NewJsRuleLogicNode(
-					inflowNodes.WithContractLogicCode(nodeData["logic_rule"].(string)),
-					inflowNodes.WithContractConditions(criteria),
-				)
-				node.Contract = &newContract.ContractRule
-			} else if lang == string(inflowModels.OPALang) { // opa-reo lang
-				newContract := inflowNodes.NewOpaRuleLogicNode(nodeData["opa_result"].(string),
-					inflowNodes.WithContractLogicCode(nodeData["logic_rule"].(string)),
-					inflowNodes.WithContractConditions(criteria),
-				)
-				node.Contract = &newContract.ContractRule
-
-			}
-		}
-
+		err = buildRuleNode(&node, vfn, nodeData)
 	case NODE_GOTO:
-		node.Type = inflowModels.GoToNodeType
-		gotoNode := inflowNodes.NewGotoNode()
-		if targetFlow, ok := nodeData["goto"].(map[string]any); ok {
-			gotoNode.From(targetFlow["flowId"].(string), targetFlow["from_nodeId"].(string))
-			gotoNode.To(targetFlow["flowId"].(string), targetFlow["end_nodeId"].(string))
-
-		}
-		node.GoTo = &gotoNode.GoToRule
-	case NODE_PLUGIN, NODE_LLM, NODE_MCP, NODE_CAST:
-		// pluginNative and the plugin-backed morphic nodes (LLM / MCP / Cast) all
-		// lower to a Plugin node. The morphic nodes carry their extra config
-		// (functions, url/auth, mappings, …) inside the plugin body so it travels
-		// to the plugin at run time.
-		node.Type = inflowModels.PluginNodeType
-		// The plugin's uniqId must equal the backing extension-table row; the front
-		// end stamps that id onto the node data as `extensionId` when the node is
-		// dropped from the palette (see pluginUniqId).
-		pluginNode, err := inflowNodes.NewPluginNode(
-			getStr(nodeData, "title"),
-			inflowNodes.WithUniqId[*inflowNodes.PluginNode](pluginUniqId(nodeData, vfn.ID)),
-			inflowNodes.WithIdleWaitMinutes(int8(15)),
-		)
-		if err != nil {
-			return nil, err
-		}
-		body, _ := nodeData["body"].(map[string]any)
-		if body == nil {
-			body = map[string]any{}
-		}
-		// Carry node-kind-specific config into the plugin body.
-		for _, k := range []string{"functions", "url", "auth", "transport", "mappings", "storeId", "mcpMode"} {
-			if v, ok := nodeData[k]; ok {
-				body[k] = v
-			}
-		}
-		// request / body come from the front end; default the request verb to "run".
-		request := getStr(nodeData, "request")
-		if request == "" {
-			request = "run"
-		}
-		pluginNode.Body = body
-		pluginNode.Request = request
-
-		node.Plugin = &pluginNode.PluginRule
+		err = buildGotoNode(&node, vfn, nodeData)
+	case NODE_LLM:
+		err = buildLLMNode(&node, vfn, nodeData)
+	case NODE_MCP:
+		err = buildMcpNode(&node, vfn, nodeData)
+	case NODE_CAST:
+		err = buildCastNode(&node, vfn, nodeData)
 	case NODE_HITL:
-		// Human-in-the-Loop → an extrinsic call to this backend's `hitl` svc.
-		// The subject carries the nodeId so the handler can recover it; the
-		// Data payload carries the title/questions to record on the task.
-		node.Type = inflowModels.ExtrinsicNodeType
-		subject := svcHandler.GetSvc(SvcHitl)
-		if subject == "" {
-			subject = svcHandler.SvcTopic(HitlSubject)
-		}
-		// The nodeId travels as the node's uniqId; the Data carries what the hitl
-		// handler records on the task (title / questions).
-		evNode := inflowNodes.NewExtrinsicSvcNode(string(subject), inflowNodes.WithUniqId[*inflowNodes.ExtrinsicSvcNode](vfn.ID))
-		evNode.ExtrinsicRule.ReqTimeoutSecound = 10
-		payload := map[string]any{"nodeId": vfn.ID}
-		if nodeData["title"] != nil {
-			payload["title"] = nodeData["title"]
-		}
-		if nodeData["questions"] != nil {
-			payload["questions"] = nodeData["questions"]
-		}
-		evNode.ExtrinsicRule.Data = payload
-		node.Extrinsic = &evNode.ExtrinsicRule
+		err = buildHitlNode(&node, vfn, nodeData)
 	case NODE_DOCSTORE, NODE_VECSTORE:
-		// Doc / Vector store → an extrinsic on svc.store.{doc,vec}.{ACTION}. The
-		// referenced store travels in the Data payload; the action selects the
-		// concrete subject. A `read` carries its `query` (SQL run against the
-		// store); a `write` carries its `input` (the JSONPath/scope of the value
-		// to store).
-		node.Type = inflowModels.ExtrinsicNodeType
-		action := getStr(nodeData, "action")
-		if action == "" {
-			action = "read"
-		}
-		tmpl := SubjectStoreDoc
-		if vfn.Type == NODE_VECSTORE {
-			tmpl = SubjectStoreVec
-		}
-		subject := svcHandler.SvcTopic(tmpl).MakeReqSubjectWithParams(map[string]any{"ACTION": action})
-		evNode := inflowNodes.NewExtrinsicSvcNode(subject)
-		evNode.ExtrinsicRule.ReqTimeoutSecound = 30
-		payload := map[string]any{"action": action}
-		// storeId/query/input/scope/key serve the doc store; text/topK serve the
-		// vector store (the text to embed and how many neighbours a search returns).
-		for _, k := range []string{"storeId", "query", "input", "scope", "key", "text", "topK"} {
-			if v, ok := nodeData[k]; ok {
-				payload[k] = v
-			}
-		}
-		evNode.ExtrinsicRule.Data = payload
-		node.Extrinsic = &evNode.ExtrinsicRule
+		err = buildStoreNode(&node, vfn, nodeData)
 	case NODE_UNTIL:
-		// Continue After → an extrinsic on svc.continue.at. The schedule is either a
-		// relative delay (a unit `mode` — seconds/minutes/hour/day — times `value`)
-		// or an absolute `at` date/time. Both collapse to a single unix time: an
-		// `at` is resolved to absolute epoch-millis (continueAt) here at compile
-		// time; a delay is reduced to delaySeconds, which the continue.at handler
-		// adds to the moment it is invoked at run time. The captured outbound nodes
-		// are NOT resolved here — they travel in the compiled Node.Next, which the
-		// handler reads from the request body to schedule the resumed run.
-		node.Type = inflowModels.ExtrinsicNodeType
-		evNode := inflowNodes.NewExtrinsicSvcNode(ContinueSubject, inflowNodes.WithUniqId[*inflowNodes.ExtrinsicSvcNode](vfn.ID))
-		evNode.ExtrinsicRule.ReqTimeoutSecound = 10
-		mode := getStr(nodeData, "mode")
-		payload := map[string]any{"mode": mode}
-		switch {
-		case mode == "at":
-			payload["at"] = getStr(nodeData, "at")
-			payload["continueAt"] = parseAtMillis(getStr(nodeData, "at"))
-		case delayModeSeconds(mode) > 0:
-			payload["delaySeconds"] = int64(getFloat(nodeData, "value") * float64(delayModeSeconds(mode)))
-		default:
-			// Legacy nodes carried delaySeconds directly (pre unit/value modes).
-			payload["delaySeconds"] = int64(getFloat(nodeData, "delaySeconds"))
-		}
-		evNode.ExtrinsicRule.Data = payload
-		node.Extrinsic = &evNode.ExtrinsicRule
-	case NODE_VOID:
-		node.Type = inflowModels.VoidNodeType
-
+		err = buildUntilNode(&node, vfn, nodeData)
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	return &node, nil
