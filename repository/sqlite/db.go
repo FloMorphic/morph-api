@@ -71,6 +71,10 @@ func Open(source string) (repository.Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: apply schema: %w", err)
 	}
+	if err := applyMigrations(context.Background(), db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite: apply migrations: %w", err)
+	}
 	var vecVersion string
 	if err := db.QueryRow("SELECT vec_version()").Scan(&vecVersion); err != nil {
 		_ = db.Close()
@@ -125,6 +129,28 @@ func (s *store) NodeSettings() repository.NodeSettingRepository { return s.nodeS
 func (s *store) Processes() repository.ProcessRepository        { return s.processes }
 func (s *store) Extensions() repository.ExtensionRepository      { return s.extensions }
 func (s *store) Close() error                                   { return s.db.Close() }
+
+// applyMigrations runs additive, idempotent schema changes that cannot live in
+// schema.sql. `CREATE TABLE IF NOT EXISTS` never alters a table that already
+// exists, so columns added after a database was first created must be patched
+// in here with `ALTER TABLE ... ADD COLUMN`. Each statement is expected to fail
+// with "duplicate column name" on databases that already have the column (fresh
+// databases, or ones migrated on a previous boot); that error is swallowed so
+// the migration stays idempotent.
+func applyMigrations(ctx context.Context, db *sql.DB) error {
+	migrations := []string{
+		`ALTER TABLE node_settings ADD COLUMN node_type TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, stmt := range migrations {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			if strings.Contains(err.Error(), "duplicate column name") {
+				continue
+			}
+			return fmt.Errorf("%q: %w", stmt, err)
+		}
+	}
+	return nil
+}
 
 // ensureDBDir creates the parent directory of a file-backed sqlite database if
 // it is missing (sqlite errors rather than creating it). No-op for in-memory

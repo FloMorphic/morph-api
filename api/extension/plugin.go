@@ -26,11 +26,21 @@ func (ctl *controller) pluginCred(c fiber.Ctx) error {
 		return etc.Fail(c, fiber.StatusBadRequest, "invalid credential request")
 	}
 	input.PluginId = strings.TrimSpace(input.PluginId)
-	if input.PluginId == "" {
-		return etc.Fail(c, fiber.StatusBadRequest, "pluginId is required")
-	}
+	input.Name = strings.TrimSpace(input.Name)
 	if input.Access == "" {
 		input.Access = models.StrictAccess
+	}
+	// strict credentials are scoped to a single plugin's subjects, so they need
+	// a pluginId; open (multi) credentials are account-wide and only need a name.
+	switch input.Access {
+	case models.StrictAccess:
+		if input.PluginId == "" {
+			return etc.Fail(c, fiber.StatusBadRequest, "pluginId is required")
+		}
+	case models.MultiPluginAccess:
+		if input.Name == "" {
+			return etc.Fail(c, fiber.StatusBadRequest, "name is required")
+		}
 	}
 
 	// Resolve the account whose seed signs the credential: the builtin-plugins
@@ -59,7 +69,7 @@ func (ctl *controller) pluginCred(c fiber.Ctx) error {
 	var cred string
 	switch input.Access {
 	case models.MultiPluginAccess:
-		ucred, err := InfraSpaces.CreateUserCredential(spaceSeed, InfraSpaces.PluginCredentialOpenPermission(input.Name, input.PluginId, pub))
+		ucred, err := InfraSpaces.CreateUserCredential(spaceSeed, InfraSpaces.PluginCredentialOpenPermission(input.Name, pub))
 		if err != nil {
 			return etc.Fail(c, fiber.StatusNotAcceptable, "error occurred in create access token")
 		}

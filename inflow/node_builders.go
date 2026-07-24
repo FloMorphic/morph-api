@@ -88,11 +88,16 @@ func buildLLMNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData ma
 		request = "run"
 	}
 	pluginNode.Request = request
+	// The compiler doesn't interpret the prompt template — it ships the drawer's
+	// `body` (messages, or a legacy prompt/system_prompt pair) straight through so
+	// the plugin owns its own contract. Only settings and the bound functions,
+	// which live outside `body`, are folded in.
 	pluginNode.Body = map[string]any{
-		"settings":      llmSettingsBody(getMap(nodeData, "settings")),
-		"prompt":        nodeBodyStr(nodeData, "prompt"),
-		"system_prompt": nodeBodyStr(nodeData, "system_prompt"),
-		"functions":     boundFunctions(nodeData, true),
+		"settings":  llmSettingsBody(getMap(nodeData, "settings")),
+		"functions": boundFunctions(nodeData, true),
+	}
+	for k, v := range getMap(nodeData, "body") {
+		pluginNode.Body[k] = v
 	}
 	node.Plugin = &pluginNode.PluginRule
 	return nil
@@ -127,12 +132,16 @@ func buildMcpNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData ma
 	pluginNode.Request = request
 	conn := mcpConnection(nodeData)
 	if request == "run" {
+		// Settings, connection and bound functions live outside `body`; the prompt
+		// template (body.messages) ships straight through untouched, same as the
+		// LLM node — the plugin owns its own body contract.
 		pluginNode.Body = map[string]any{
-			"settings":      llmSettingsBody(getMap(nodeData, "settings")),
-			"connection":    conn,
-			"prompt":        nodeBodyStr(nodeData, "prompt"),
-			"system_prompt": nodeBodyStr(nodeData, "system_prompt"),
-			"functions":     boundFunctions(nodeData, false),
+			"settings":   llmSettingsBody(getMap(nodeData, "settings")),
+			"connection": conn,
+			"functions":  boundFunctions(nodeData, false),
+		}
+		for k, v := range getMap(nodeData, "body") {
+			pluginNode.Body[k] = v
 		}
 	} else {
 		args, _ := nodeData["arguments"].(map[string]any)
@@ -399,15 +408,6 @@ func getMap(data map[string]any, key string) map[string]any {
 		return m
 	}
 	return map[string]any{}
-}
-
-// nodeBodyStr reads a string field out of the drawer's `body` sub-map
-// (e.g. body.prompt — the prompt template).
-func nodeBodyStr(data map[string]any, key string) string {
-	if b, ok := data["body"].(map[string]any); ok {
-		return getStr(b, key)
-	}
-	return ""
 }
 
 // delayModeSeconds maps a Continue After delay unit to seconds. An unknown mode
