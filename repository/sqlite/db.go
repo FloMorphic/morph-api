@@ -28,6 +28,9 @@ var schemaSQL string
 //go:embed seed/builtins.json
 var builtinsSeed []byte
 
+//go:embed seed/prompts.json
+var promptsSeed []byte
+
 const driverName = "sqlite"
 
 func init() {
@@ -105,6 +108,16 @@ func Open(source string) (repository.Store, error) {
 		fmt.Printf("seeded %d builtin node(s)\n", n)
 	}
 
+	// Seed the starter prompt templates the same way (idempotent, keyed by their
+	// fixed ids). Same rule: a bad seed file is a warning, never a startup error.
+	if defs, err := decodePromptsSeed(); err != nil {
+		fmt.Printf("warning: prompts seed not applied: %v\n", err)
+	} else if n, err := s.prompts.SeedPrompts(context.Background(), defs); err != nil {
+		fmt.Printf("warning: prompts seed not applied: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("seeded %d prompt(s)\n", n)
+	}
+
 	return s, nil
 }
 
@@ -116,6 +129,18 @@ func decodeBuiltinsSeed() ([]models.ExtensionRecord, error) {
 	}
 	if err := sonic.Unmarshal(builtinsSeed, &defs); err != nil {
 		return nil, fmt.Errorf("decode builtins seed: %w", err)
+	}
+	return defs, nil
+}
+
+// decodePromptsSeed parses the embedded prompt-template seed into records.
+func decodePromptsSeed() ([]models.PromptRecord, error) {
+	var defs []models.PromptRecord
+	if len(promptsSeed) == 0 {
+		return defs, nil
+	}
+	if err := sonic.Unmarshal(promptsSeed, &defs); err != nil {
+		return nil, fmt.Errorf("decode prompts seed: %w", err)
 	}
 	return defs, nil
 }

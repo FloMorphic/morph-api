@@ -96,6 +96,28 @@ func (r *promptRepo) List(ctx context.Context, p repository.ListParams) ([]model
 	return items, total, nil
 }
 
+// SeedPrompts inserts each seed prompt whose id is not already stored, keyed by
+// that fixed id, so restarts don't duplicate them and later edits survive.
+func (r *promptRepo) SeedPrompts(ctx context.Context, defs []models.PromptRecord) (int, error) {
+	inserted := 0
+	for i := range defs {
+		def := defs[i]
+		if def.ID == "" {
+			continue // without a fixed id there is nothing to recognise on restart
+		}
+		if _, err := r.GetByID(ctx, def.ID); err == nil {
+			continue // already seeded
+		} else if !errors.Is(err, repository.ErrNotFound) {
+			return inserted, err
+		}
+		if err := r.Upsert(ctx, &def); err != nil {
+			return inserted, err
+		}
+		inserted++
+	}
+	return inserted, nil
+}
+
 func (r *promptRepo) Delete(ctx context.Context, id string) error {
 	n, err := r.q.DeletePrompt(ctx, id)
 	if err != nil {

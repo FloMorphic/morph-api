@@ -107,7 +107,18 @@ type MemoryRepository interface {
 }
 
 // PromptRepository is CRUD for prompt templates (PromptRecord).
-type PromptRepository = CRUD[models.PromptRecord]
+//
+// A starter set is additionally seeded on first run; SeedPrompts inserts those
+// definitions idempotently (keyed by id), leaving existing rows untouched.
+type PromptRepository interface {
+	CRUD[models.PromptRecord]
+	// SeedPrompts inserts any prompt in defs whose id is not already present.
+	// Seeded prompts carry a fixed id precisely so a restart recognises them and
+	// never inserts a second copy — and so edits to one survive. A prompt the
+	// user deletes does come back on the next start: that is the trade for
+	// keeping the set fixed and the check id-based. Returns the rows inserted.
+	SeedPrompts(ctx context.Context, defs []models.PromptRecord) (int, error)
+}
 
 // HumanTaskRepository is CRUD for Human-in-the-Loop tasks (HumanTask).
 //
