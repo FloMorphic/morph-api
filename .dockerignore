@@ -1,0 +1,20 @@
+# Everything the image builds for itself, plus anything that must never leak in.
+.git
+.gitignore
+.vscode
+.claude
+Dockerfile
+.dockerignore
+README.md
+
+# Local secrets and state — the container gets these through env vars and /data.
+.env
+.env.*
+!.env.example
+db/
+data/
+
+# Build output (the image compiles its own).
+flomorphic-api
+__debug_bin*
+bin/

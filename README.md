@@ -167,6 +167,37 @@ The inflow runtime is **optional**: with `INFLOW_INFRA_API` unset the server run
 CRUD-only (matching the web app's standalone mode). Auth is off by default so the
 web app works without a token.
 
+### In Docker
+
+```sh
+docker build -t flomorphic-api:local .
+docker run --rm -p 8025:8025 --network inflow_net \
+  -e INFLOW_INFRA_API=http://inflow-infra:8022 \
+  -e INFLOW_INFRA_JWT_SECRET=<Infra API Secret Key> \
+  -e DB_SOURCE=/data/flomorphic.db -v "$PWD/data:/data" \
+  flomorphic-api:local
+```
+
+The image also **starts the builtin plugin nodes**, which is not a convenience —
+it is where the dependency actually points. An inflow plugin needs a NATS
+credential on the builtin-plugins account, and the component that mints one is
+this API (`POST /extension/plugin/cred`). So the entrypoint starts the server,
+waits for `/health`, mints one multi-access credential, and runs every plugin
+folder in `$PLUGINS_REPO` with it — each under the `PLUGIN_ID` this API's seed
+(`repository/sqlite/seed/builtins.json`) assigns to its builtin node, so saved
+workflows keep resolving across reinstalls.
+
+| Variable           | Default                                             | Purpose                                         |
+| ------------------ | --------------------------------------------------- | ----------------------------------------------- |
+| `PLUGINS_ENABLED`  | `1`                                                 | `0` ⇒ a plain API container                     |
+| `PLUGINS_REPO`     | `https://github.com/FloMorphic/builtin-plugins.git` | repo the plugin binaries come from              |
+| `PLUGINS_REF`      | `main`                                              | branch/tag; changing it rebuilds them at start  |
+| `PLUGIN_ID_<NAME>` | —                                                   | override one folder's id (e.g. `PLUGIN_ID_LLM`) |
+| `PLUGIN_INFRA_URL` | derived from `INFLOW_INFRA_API` + `:4222`           | NATS endpoint (`host:port`, no scheme)          |
+
+For the whole product in one container — this API, the canvas and one nginx in
+front — see [FloMorphic/getting-started](https://github.com/FloMorphic/getting-started).
+
 ## Development
 
 ```sh
