@@ -64,6 +64,23 @@ func GetInfraApiUrl() string {
 	return getEnvVar("INFLOW_INFRA_API")
 }
 
+// GetInfraNatsUrl is the NATS endpoint handed to plugins in the generated
+// `INFRA_URL` (PLUGIN_INFRA_URL). It exists because the address this API reaches
+// Infra on is not always the address a plugin can: the API usually runs inside
+// the compose network ("infra:4222") while a user runs their plugin on a laptop
+// or another host, which needs the published one. Empty means "use whatever the
+// connected runtime reports" — see the extension controller's infraNatsURL.
+func GetInfraNatsUrl() string {
+	return strings.TrimSpace(getEnvVar("PLUGIN_INFRA_URL"))
+}
+
+// GetPublicApiUrl is the base URL callers reach this API on (PUBLIC_API_URL),
+// used to build the plugin installer one-liner. Empty means "derive it from the
+// request", which is right unless a proxy rewrites the Host header.
+func GetPublicApiUrl() string {
+	return strings.TrimRight(strings.TrimSpace(getEnvVar("PUBLIC_API_URL")), "/")
+}
+
 // GetInfraJWTSecret is the shared secret used to authenticate with the infra API
 // and to verify inbound API tokens (INFLOW_INFRA_JWT_SECRET).
 func GetInfraJWTSecret() string {

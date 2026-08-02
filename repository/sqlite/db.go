@@ -165,6 +165,9 @@ func (s *store) Close() error                                   { return s.db.Cl
 func applyMigrations(ctx context.Context, db *sql.DB) error {
 	migrations := []string{
 		`ALTER TABLE node_settings ADD COLUMN node_type TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE extensions ADD COLUMN install TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE extensions ADD COLUMN action TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE extensions ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range migrations {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

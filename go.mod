@@ -3,12 +3,13 @@ module github.com/FloMorphic/morph-api
 go 1.26.2
 
 require (
-	github.com/Inflowenger/inflow-fusion v0.2.2
+	github.com/Inflowenger/inflow-fusion v0.2.3
 	github.com/asg017/sqlite-vec-go-bindings v0.1.6
 	github.com/bytedance/sonic v1.15.2
 	github.com/gofiber/contrib/v3/jwt v1.1.7
 	github.com/gofiber/contrib/v3/socketio v1.3.1
 	github.com/gofiber/fiber/v3 v3.4.0
+	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.48
 	github.com/nats-io/nats.go v1.52.0
@@ -28,7 +29,6 @@ require (
 	github.com/gofiber/schema v1.8.0 // indirect
 	github.com/gofiber/utils/v2 v2.1.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/klauspost/compress v1.19.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect

@@ -88,6 +88,72 @@ user — so a profile carries what kind of node it belongs to.
 The `node` query filter scopes the list to one node's profiles (used by the node
 drawer's profile selector).
 
+### Extensions — `ExtensionRecord` (the node palette), page-paginated
+
+Every row is one palette node. `kind` separates admin-managed **builtins**
+(seeded on first run, UI hard-coded in the front end) from user-imported
+**extensions** — inflowv1 plugins, whose settings form and actions are read live
+over NATS via `pluginId` rather than stored.
+
+| Method | Path                                    | Notes                                            |
+| ------ | --------------------------------------- | ------------------------------------------------ |
+| POST   | `/extension`                            | `ExtensionRecord` (no `id` ⇒ create)             |
+| GET    | `/extension`                            | `?page=1&per_page=12&search=&kind=`              |
+| GET    | `/extension/extrinsics`                 | backend extrinsic services an extrinsic can bind |
+| GET    | `/extension/id/:id`                     | —                                                |
+| DELETE | `/extension/id/:id`                     | —                                                |
+| GET    | `/extension/id/:id/intro`               | live: plugin `@intro`                            |
+| GET    | `/extension/id/:id/settings`            | live: plugin `@settings` form                    |
+| GET    | `/extension/id/:id/actions`             | live: plugin `@actions`                          |
+| GET    | `/extension/id/:id/actions/:method/form`| live: one action's `@form`                       |
+| POST   | `/extension/id/:id/:fn`                 | live: call `inflow.v1.<pluginId>.<fn>` (`:id` is the **plugin id**) |
+| POST   | `/extension/plugin/cred`                | mint a plugin runtime credential                 |
+| GET    | `/extension/id/:id/install`             | one-liner + script + env to install from source  |
+| GET    | `/extension/id/:id/install.sh`          | the installer itself (text/plain, for `curl \| bash`) |
+| GET    | `/extension/id/:id/env`                 | just the dotenv, for a checkout you already have |
+| POST   | `/extension/id/:id/sync`                | rebuild this plugin's palette rows from `@actions`|
+
+**Getting a third-party plugin running.** A plugin is an independent process the
+user runs wherever they like; all this API needs is for it to reach Infra under
+an id it knows. So onboarding is *register the row, then hand back what it takes
+to run it* — two paths, both driven from the web app's Extensions page:
+
+1. **From source.** The row carries an `install` spec (`repo`, `ref`, `subdir`,
+   `runtime`, `envFile`, `env`). `GET …/install` answers with a one-liner that
+   pipes `…/install.sh` into bash; the script clones the repo, writes the dotenv
+   with a freshly minted credential, builds (`go` / `node` / `docker`, or detected)
+   and starts the plugin in a directory the user names.
+2. **Bring your own checkout.** `GET …/env` answers with only the dotenv —
+   `PLUGIN_ID` / `INFRA_URL` / `INFRA_CRED` plus the row's declared extras — which
+   is all a plugin needs to come up.
+
+Nothing is cloned, built or executed here: the API renders text the user runs.
+Both responses embed a plugin-scoped credential, so they are secret-bearing in
+exactly the way `POST /extension/plugin/cred` already is — put the API behind
+`AUTH_ENABLED` on any shared deployment.
+
+**From a running plugin to palette nodes.** A plugin describes itself over
+inflowv1 and none of it is stored, because the plugin is the only authority on
+what it can do and can be redeployed at any time. `POST …/sync` is the one place
+that copies any of it into the database, and it does so as a **replacement**:
+every row derived from that plugin is deleted, then one row per live action is
+written (carrying the action's method, icon and form). That is what makes a
+method the plugin dropped disappear from the palette instead of lingering as a
+node that no longer resolves. The plugin's own registration row is never touched.
+
+Those derived rows are `action` + `parentId` rows in the same table; the web app
+lists them as a searchable *Plugins* tab in the canvas palette, and each drags out
+as a `plugin` node that compiles to `request = <action>`.
+
+> The settings form from `@intro` is deliberately **not** stored: it is the shape
+> of a settings profile, and profiles live under `/settings` keyed by plugin id.
+>
+> Note that the Go plugin SDK through **v0.1.3 never answers `@intro`** — its
+> handler marshals the `Intro` *method* instead of the intro field, so the reply
+> never arrives. Sync therefore treats `@intro` as best-effort and requires only
+> `@actions`, and the web app probes liveness with `@actions` and falls back to
+> `@settings` for a plugin's requirements.
+
 Plus `GET /health`.
 
 **Pagination.** List endpoints are page-based: `?page` (1-based) and `?per_page`
@@ -151,6 +217,18 @@ finds the header without a system `libsqlite3-dev`. To build by hand:
 CGO_ENABLED=1 CGO_CFLAGS="-I$PWD/repository/sqlite/cdeps" go build .
 ```
 
+**On musl (Alpine, and therefore most containers)** sqlite-vec does not compile
+as-is: its amalgamation does `typedef u_int8_t uint8_t;` for every non-Windows
+target, and `u_int*_t` is a BSD/glibc spelling musl lacks, so the typedefs
+collapse to implicit `int`. Map them back to the C99 names — a no-op on glibc:
+
+```sh
+make build CGO_CFLAGS="-I$PWD/repository/sqlite/cdeps \
+  -Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t"
+```
+
+The Dockerfile does this for you (`MUSL_CFLAGS`).
+
 ### Configuration (env / `.env`)
 
 | Variable                  | Default         | Purpose                                        |
@@ -162,6 +240,13 @@ CGO_ENABLED=1 CGO_CFLAGS="-I$PWD/repository/sqlite/cdeps" go build .
 | `API_JWT_SECRET`          | —               | HS256 secret (falls back to the infra secret)  |
 | `INFLOW_INFRA_API`        | —               | inflow infra API base; unset ⇒ runtime disabled|
 | `INFLOW_INFRA_JWT_SECRET` | —               | shared secret for the inflow runtime           |
+| `PLUGIN_INFRA_URL`        | runtime's NATS  | `INFRA_URL` written into generated plugin envs |
+| `PUBLIC_API_URL`          | request origin  | base URL used in the plugin install one-liner  |
+
+`PLUGIN_INFRA_URL` matters when plugins run outside the compose network: the
+address this API reaches Infra on (`infra:4222`) is not the one a plugin on
+someone's laptop can dial, so set the published endpoint there. `PUBLIC_API_URL`
+is only needed when a proxy rewrites `Host`.
 
 The inflow runtime is **optional**: with `INFLOW_INFRA_API` unset the server runs
 CRUD-only (matching the web app's standalone mode). Auth is off by default so the
@@ -194,6 +279,13 @@ workflows keep resolving across reinstalls.
 | `PLUGINS_REF`      | `main`                                              | branch/tag; changing it rebuilds them at start  |
 | `PLUGIN_ID_<NAME>` | —                                                   | override one folder's id (e.g. `PLUGIN_ID_LLM`) |
 | `PLUGIN_INFRA_URL` | derived from `INFLOW_INFRA_API` + `:4222`           | NATS endpoint (`host:port`, no scheme)          |
+| `GOPROXY`          | `https://proxy.golang.org,direct`                   | module proxy for the build and for a runtime plugin rebuild |
+
+> **Build fails with a 403 while downloading modules?** `proxy.golang.org`
+> redirects module zips to `storage.googleapis.com`, and networks that block that
+> host fail mid-download. Use a mirror:
+> `docker build --build-arg GOPROXY=https://goproxy.cn,direct -t flomorphic-api:local .`
+> (the same value works as `GOPROXY=…` for a plain `make build`).
 
 For the whole product in one container — this API, the canvas and one nginx in
 front — see [FloMorphic/getting-started](https://github.com/FloMorphic/getting-started).

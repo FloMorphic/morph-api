@@ -50,11 +50,11 @@ const (
 // branch). For KindExtension nodes PluginID identifies the inflowv1 plugin whose
 // settings form and actions are fetched live (never stored here).
 type ExtensionRecord struct {
-	ID          string         `json:"id"`
-	Kind        ExtensionKind  `json:"kind"`
-	Type        ExtensionType  `json:"type"`
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
+	ID          string        `json:"id"`
+	Kind        ExtensionKind `json:"kind"`
+	Type        ExtensionType `json:"type"`
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
 	// PluginID is the inflowv1 PLUGIN_ID for KindExtension nodes — the id used
 	// to build `inflow.v1.<PLUGIN_ID>.…` subjects when fetching the plugin's
 	// intro/settings/actions/forms live. Empty for builtins.
@@ -62,8 +62,139 @@ type ExtensionRecord struct {
 	Icon       Icon           `json:"icon"`
 	Parameters FormParameters `json:"params"`
 	BindTo     Bind           `json:"bindTo"`
-	CreatedAt  int64          `json:"createdAt"`
-	UpdatedAt  int64          `json:"updatedAt"`
+	// Install describes how the user runs the plugin behind this row. It is
+	// documentation the install endpoints render into a script / env file — the
+	// backend never clones or executes anything itself.
+	Install InstallSpec `json:"install"`
+	// Action names the one inflowv1 method this palette entry runs, for the rows
+	// derived from a plugin's `@actions` (a Jira plugin contributes an "add
+	// task" node, an "update task" node, …). Empty on a plugin's own
+	// registration row and on builtins. It compiles to the plugin node's
+	// `request`, and it is what separates a derived row — replaced wholesale on
+	// every sync — from a user-owned one.
+	Action string `json:"action"`
+	// ParentID links a derived action row back to the registration row it was
+	// synced from, so the portal can group them and a delete can take them with
+	// it. Empty on non-derived rows.
+	ParentID  string `json:"parentId"`
+	CreatedAt int64  `json:"createdAt"`
+	UpdatedAt int64  `json:"updatedAt"`
+}
+
+// --- inflowv1 descriptors (read live, never stored) -------------------------
+//
+// These mirror the plugin SDK's wire shapes (sdkv1/models.go). The backend only
+// passes them through — a plugin is the sole authority on what it exposes — but
+// the sync pass has to read `@actions` to turn each action into a palette row.
+
+// PluginIntro is `inflow.v1.<pluginId>.@intro`: who the plugin is, plus the
+// settings form it needs filled in before any action runs. That form is the
+// plugin's onboarding — the web app renders it into a settings profile.
+type PluginIntro struct {
+	Name     string       `json:"name"`
+	Author   string       `json:"author"`
+	Version  string       `json:"version"`
+	Settings *FormBuilder `json:"settings,omitempty"`
+}
+
+// PluginAction is one entry of `inflow.v1.<pluginId>.@actions`: a method the
+// plugin can run, with the label/icon a palette needs and the form its
+// parameters are collected through.
+type PluginAction struct {
+	Method      string      `json:"method"`
+	Title       string      `json:"title"`
+	Description string      `json:"description"`
+	Icon        PluginIcon  `json:"icon"`
+	Form        FormBuilder `json:"form"`
+}
+
+// PluginIcon is the SDK's icon reference for an action.
+type PluginIcon struct {
+	Ref  string `json:"ref"`
+	Icon string `json:"icon"`
+}
+
+// FormBuilder is the SDK's form descriptor. `Jsonschema` / `Jsonui` are JSON
+// *documents carried as strings* — that is the SDK's wire format, and they are
+// stored and forwarded exactly as received.
+type FormBuilder struct {
+	SubmitTo   string `json:"submit_to"`
+	Jsonui     string `json:"jsonui"`
+	Jsonschema string `json:"jsonschema"`
+}
+
+// SyncResult reports what a sync did to a plugin's palette rows.
+type SyncResult struct {
+	Intro    PluginIntro    `json:"intro"`
+	Actions  []PluginAction `json:"actions"`
+	Added    int            `json:"added"`
+	Removed  int            `json:"removed"`
+	PluginID string         `json:"pluginId"`
+}
+
+// EnvVar is one extra environment entry a plugin needs beyond the three the
+// inflowv1 SDK requires (PLUGIN_ID / INFRA_URL / INFRA_CRED) — an upstream API
+// key, an endpoint, a mode flag. Values are stored as given and rendered into
+// the generated env file, so treat the store as secret-bearing.
+type EnvVar struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// InstallSpec is the "how do I run this plugin" half of an extension row: where
+// its source lives and what env it needs. Everything is optional — a plugin the
+// user already has on disk only needs the env half, which is exactly the second
+// onboarding path (register the id here, copy the env file).
+type InstallSpec struct {
+	// Repo is the git remote to clone (https or ssh). Empty for a plugin the
+	// user obtained themselves.
+	Repo string `json:"repo"`
+	// Ref is the branch / tag / commit to check out. Defaults to the remote head.
+	Ref string `json:"ref"`
+	// Subdir is the path inside the repo holding the plugin module, for repos
+	// that ship several plugins (e.g. "llm" in builtin-plugins).
+	Subdir string `json:"subdir"`
+	// Runtime picks how the generated script builds and starts the plugin:
+	// "auto" (detect from the checkout), "go", "node" or "docker".
+	Runtime InstallRuntime `json:"runtime"`
+	// EnvFile is the dotenv filename the plugin reads (the Go SDK's convention
+	// is `.env.inflow`; the shipped builtins use `.env.morph`).
+	EnvFile string `json:"envFile"`
+	// Env are the plugin-specific variables written into that file alongside the
+	// minted credential.
+	Env []EnvVar `json:"env"`
+}
+
+// InstallRuntime is how the generated installer builds and starts a plugin.
+type InstallRuntime string
+
+const (
+	RuntimeAuto   InstallRuntime = "auto"
+	RuntimeGo     InstallRuntime = "go"
+	RuntimeNode   InstallRuntime = "node"
+	RuntimeDocker InstallRuntime = "docker"
+)
+
+// InstallInfo is the answer to "how do I get this plugin running" for one
+// registered extension: a one-liner to paste into a shell, the env file that
+// one-liner writes, and the script URL it pulls. Both carry a freshly minted
+// plugin credential, so the payload is secret-bearing.
+type InstallInfo struct {
+	// Command is the one-liner: `curl -fsSL <scriptUrl> | bash -s -- <dir>`.
+	Command string `json:"command"`
+	// ScriptURL is the raw installer endpoint the command pipes into bash.
+	ScriptURL string `json:"scriptUrl"`
+	// Script is that installer's body, so the UI can show what will run.
+	Script string `json:"script"`
+	// Env is the dotenv content the script writes (also the whole deliverable
+	// for a user who already has the plugin checked out).
+	Env string `json:"env"`
+	// EnvFile is the filename Env should be saved as.
+	EnvFile string `json:"envFile"`
+	// Dir is the install directory the command targets.
+	Dir string `json:"dir"`
+	// PluginID is the inflowv1 identity the credential is scoped to.
+	PluginID string `json:"pluginId"`
 }
 
 type Bind struct {

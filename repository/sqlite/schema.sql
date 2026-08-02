@@ -122,9 +122,11 @@ CREATE TABLE IF NOT EXISTS processes (
 -- front end) from user-imported inflowv1 plugins (`extension`, whose settings
 -- form and actions are fetched live over NATS via `plugin_id`). `type` is the
 -- generic inflow/palette node type it compiles to. `icon`, `params` (JSON-schema
--- form) and `bind_to` (extrinsic topic + values) are JSON objects. Managed
--- through the REST API (full CRUD); builtins are additionally seeded idempotently
--- by name.
+-- form) and `bind_to` (extrinsic topic + values) are JSON objects. `install` is
+-- the JSON "how to run it" spec for imported plugins (repo/ref/runtime + the
+-- extra env they need), which the install endpoints render into a script and an
+-- env file. Managed through the REST API (full CRUD); builtins are additionally
+-- seeded idempotently by name.
 CREATE TABLE IF NOT EXISTS extensions (
     id          TEXT    PRIMARY KEY,
     kind        TEXT    NOT NULL DEFAULT 'extension',
@@ -135,6 +137,9 @@ CREATE TABLE IF NOT EXISTS extensions (
     icon        TEXT    NOT NULL DEFAULT '{}',
     params      TEXT    NOT NULL DEFAULT '{}',
     bind_to     TEXT    NOT NULL DEFAULT '{}',
+    install     TEXT    NOT NULL DEFAULT '{}',
+    action      TEXT    NOT NULL DEFAULT '',
+    parent_id   TEXT    NOT NULL DEFAULT '',
     created_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL
 );

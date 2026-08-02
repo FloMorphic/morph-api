@@ -186,6 +186,47 @@ func buildCastNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData m
 	return nil
 }
 
+// buildPluginActionNode lowers a node contributed by an imported plugin to a
+// Plugin node calling one of that plugin's actions.
+//
+// It is the generic counterpart to the builtins above: those each know their
+// plugin's body contract and shape it here, while this one knows nothing about
+// the plugin it is calling. The action's own form defined the drawer's fields,
+// so the collected values (`body`) ship through untouched — the plugin is the
+// only authority on what it accepts. `settings` is folded in the same way as for
+// the builtins: the frontend resolves the selected settings profile onto the
+// node, and it is passed verbatim rather than projected onto a known contract.
+//
+// `request` is the action's method, stamped on the node when it was dropped from
+// the palette. Without one there is no subject to call, so that is an error
+// rather than a silent default.
+func buildPluginActionNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData map[string]any) error {
+	node.Type = inflowModels.PluginNodeType
+	pluginNode, err := newPluginNode(vfn, nodeData)
+	if err != nil {
+		return err
+	}
+	request := getStr(nodeData, "action")
+	if request == "" {
+		request = getStr(nodeData, "request")
+	}
+	if request == "" {
+		return fmt.Errorf("plugin node %q has no action to call", vfn.ID)
+	}
+	pluginNode.Request = request
+
+	body := getMap(nodeData, "body")
+	if body == nil {
+		body = map[string]any{}
+	}
+	if settings := getMap(nodeData, "settings"); len(settings) > 0 {
+		body["settings"] = settings
+	}
+	pluginNode.Body = body
+	node.Plugin = &pluginNode.PluginRule
+	return nil
+}
+
 // buildHitlNode lowers a Human-in-the-Loop node to an extrinsic call to this
 // backend's `hitl` svc. The subject carries the nodeId so the handler can
 // recover it; the Data payload carries the title/questions to record on the

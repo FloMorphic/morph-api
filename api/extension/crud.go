@@ -10,6 +10,7 @@ import (
 	InfraSpaces "github.com/Inflowenger/inflow-fusion/spaces"
 	svcHandler "github.com/Inflowenger/inflow-fusion/svcHandler"
 	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
 )
 
 // upsert handles POST /extension — create (no id) or update a palette node.
@@ -28,10 +29,59 @@ func (ctl *controller) upsert(c fiber.Ctx) error {
 	if input.Kind != models.KindBuiltin && input.Kind != models.KindExtension {
 		return etc.Fail(c, fiber.StatusBadRequest, "kind must be 'builtin' or 'extension'")
 	}
+	// The plugin id of an imported plugin belongs to the server, not the caller
+	// (see resolvePluginID).
+	if input.Kind == models.KindExtension {
+		input.PluginID = ctl.resolvePluginID(c, input.ID, input.Name)
+	}
 	if err := ctl.repo.Upsert(c.Context(), &input); err != nil {
 		return etc.FailFromRepo(c, err, "extension not found")
 	}
 	return etc.OK(c, input)
+}
+
+// resolvePluginID decides the inflowv1 identity of an imported plugin. The
+// caller never gets a say: a fresh row is issued one, and an existing row keeps
+// the one it already has.
+//
+// Generated rather than user-chosen because the id is not a label — it is an
+// address. Every subject the plugin owns is `inflow.v1.<pluginId>.…`, and the
+// credential minted for it is scoped to exactly those subjects, so two people
+// importing the same plugin under the same name would otherwise end up sharing
+// (and able to answer for) each other's traffic.
+//
+// Never reassigned on update — not even when the row is renamed: it is what the
+// running plugin was configured with and what its credential is bound to, so
+// changing it would orphan a live process.
+func (ctl *controller) resolvePluginID(c fiber.Ctx, id, name string) string {
+	if id != "" {
+		if existing, err := ctl.repo.GetByID(c.Context(), id); err == nil && existing.PluginID != "" {
+			return existing.PluginID
+		}
+	}
+	return newPluginID(name)
+}
+
+// newPluginID is `<name>-<uuid>`: the uuid carries the uniqueness, the name
+// prefix is there so the id is recognisable where it actually shows up — NATS
+// subjects, plugin logs, the dotenv on the user's disk.
+//
+// The name half is slugified rather than used verbatim because the id becomes a
+// subject token: a dot would split the subject, and `*` / `>` / whitespace would
+// turn it into a wildcard or break the parse. It is also capped, since the full
+// id is repeated in every subject.
+func newPluginID(name string) string {
+	return slug(truncate(name, pluginIDNameMax), "plugin") + "-" + uuid.NewString()
+}
+
+// pluginIDNameMax bounds the readable half of a plugin id.
+const pluginIDNameMax = 32
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max]
 }
 
 // list handles GET /extension — page-based listing with total count. An optional
@@ -70,13 +120,26 @@ func (ctl *controller) getByID(c fiber.Ctx) error {
 	return etc.OK(c, rec)
 }
 
-// deleteByID handles DELETE /extension/id/:id.
+// deleteByID handles DELETE /extension/id/:id. Removing a plugin's registration
+// row takes the palette rows synced from its actions with it — they only exist
+// to describe that plugin, so leaving them behind would strand nodes pointing at
+// an id nothing is registered under.
 func (ctl *controller) deleteByID(c fiber.Ctx) error {
 	id := c.Params("id")
+	rec, err := ctl.repo.GetByID(c.Context(), id)
+	if err != nil {
+		return etc.FailFromRepo(c, err, "extension not found")
+	}
 	if err := ctl.repo.Delete(c.Context(), id); err != nil {
 		return etc.FailFromRepo(c, err, "extension not found")
 	}
-	return etc.Send(c, fiber.StatusAccepted, fiber.Map{"id": id}, nil)
+	actions := 0
+	if rec.Action == "" && rec.PluginID != "" {
+		if actions, err = ctl.repo.DeletePluginActions(c.Context(), rec.PluginID); err != nil {
+			return etc.FailFromRepo(c, err, "extension not found")
+		}
+	}
+	return etc.Send(c, fiber.StatusAccepted, fiber.Map{"id": id, "actionsRemoved": actions}, nil)
 }
 
 // extrinsics handles GET /extension/extrinsics — the backend-registered extrinsic

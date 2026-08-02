@@ -51,6 +51,12 @@ const (
 	NODE_UNTIL      = "until"      // -> extrinsic (svc.continue.at)
 	NODE_CAST       = "cast"       // -> plugin
 
+	// NODE_PLUGIN is a node contributed by an imported inflowv1 plugin: one
+	// action of that plugin, dropped from the palette after a sync. Unlike the
+	// builtins above it has no hard-coded contract — the plugin's own action
+	// form decides its fields — so it lowers generically.
+	NODE_PLUGIN = "plugin" // -> plugin (any imported plugin action)
+
 	// Store service subject templates (inflo-fusion listens on svc.store.{doc,vec}.*).
 	SubjectStoreDoc = "svc.store.doc.{ACTION}"
 	SubjectStoreVec = "svc.store.vec.{ACTION}"
@@ -157,6 +163,8 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 		err = buildMcpNode(&node, vfn, nodeData)
 	case NODE_CAST:
 		err = buildCastNode(&node, vfn, nodeData)
+	case NODE_PLUGIN:
+		err = buildPluginActionNode(&node, vfn, nodeData)
 	case NODE_HITL:
 		err = buildHitlNode(&node, vfn, nodeData)
 	case NODE_DOCSTORE, NODE_VECSTORE:

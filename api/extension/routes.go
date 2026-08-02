@@ -32,6 +32,18 @@ func Register(api fiber.Router, store repository.Store) {
 
 	g.Get("/id/:id/actions/:method/form", ctl.actionForm) // live: one action's @form
 
+	// Onboarding an imported plugin (see install.go): the one-liner + script that
+	// installs and starts it from source, and the bare dotenv for a user who
+	// already has the plugin on disk. Both mint the plugin's credential.
+	g.Get("/id/:id/install", ctl.installInfo)
+	g.Get("/id/:id/install.sh", ctl.installScriptRaw)
+	g.Get("/id/:id/env", ctl.installEnv)
+
+	// Rebuild a plugin's palette rows from its live @actions (see sync.go).
+	// Registered before the catch-all POST below so "sync" is not read as a
+	// plugin method name.
+	g.Post("/id/:id/sync", ctl.syncActions)
+
 	// Live REST->inflowv1 shim: POST a body to one of a plugin's methods (an
 	// action or a metaFunc, e.g. the MCP node's getToolsList) and get its raw
 	// response. Here `:id` is the plugin's inflowv1 PluginID *directly* (e.g. the

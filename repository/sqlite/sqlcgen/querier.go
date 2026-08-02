@@ -23,6 +23,10 @@ type Querier interface {
 	DeleteHumanTask(ctx context.Context, id string) (int64, error)
 	DeleteMemoryStore(ctx context.Context, id string) (int64, error)
 	DeleteNodeSetting(ctx context.Context, id string) (int64, error)
+	// Drop every palette row derived from one plugin's @actions, leaving the
+	// plugin's own registration row (action = '') alone. The sync pass replaces
+	// rather than merges, so a method the plugin dropped disappears with it.
+	DeletePluginActions(ctx context.Context, pluginID string) (int64, error)
 	DeleteProcess(ctx context.Context, indexID int64) (int64, error)
 	DeletePrompt(ctx context.Context, id string) (int64, error)
 	DeleteWorkflow(ctx context.Context, id string) (int64, error)

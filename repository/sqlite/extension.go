@@ -95,6 +95,14 @@ func (r *extensionRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeletePluginActions drops the palette rows derived from one plugin's actions,
+// keeping the plugin's own registration row. Zero deleted is not an error — a
+// plugin that has never been synced simply has none.
+func (r *extensionRepo) DeletePluginActions(ctx context.Context, pluginID string) (int, error) {
+	n, err := r.q.DeletePluginActions(ctx, pluginID)
+	return int(n), err
+}
+
 // retiredBuiltinNames are the pre-morphic generic builtins that the current seed
 // replaced. They are pruned on startup so an existing dev DB's palette matches
 // the seeded set (idempotent — a missing row is a no-op).
@@ -164,6 +172,10 @@ func toParams(e *models.ExtensionRecord) (sqlcgen.UpsertExtensionParams, error) 
 	if err != nil {
 		return sqlcgen.UpsertExtensionParams{}, fmt.Errorf("sqlite: marshal extension bindTo: %w", err)
 	}
+	install, err := json.Marshal(e.Install)
+	if err != nil {
+		return sqlcgen.UpsertExtensionParams{}, fmt.Errorf("sqlite: marshal extension install: %w", err)
+	}
 	return sqlcgen.UpsertExtensionParams{
 		ID:          e.ID,
 		Kind:        string(e.Kind),
@@ -174,6 +186,9 @@ func toParams(e *models.ExtensionRecord) (sqlcgen.UpsertExtensionParams, error) 
 		Icon:        string(icon),
 		Params:      string(params),
 		BindTo:      string(bindTo),
+		Install:     string(install),
+		Action:      e.Action,
+		ParentID:    e.ParentID,
 		CreatedAt:   e.CreatedAt,
 		UpdatedAt:   e.UpdatedAt,
 	}, nil
@@ -187,6 +202,8 @@ func extensionFromRow(row sqlcgen.Extension) (*models.ExtensionRecord, error) {
 		Name:        row.Name,
 		Description: row.Description,
 		PluginID:    row.PluginID,
+		Action:      row.Action,
+		ParentID:    row.ParentID,
 		CreatedAt:   row.CreatedAt,
 		UpdatedAt:   row.UpdatedAt,
 	}
@@ -203,6 +220,11 @@ func extensionFromRow(row sqlcgen.Extension) (*models.ExtensionRecord, error) {
 	if row.BindTo != "" {
 		if err := json.Unmarshal([]byte(row.BindTo), &rec.BindTo); err != nil {
 			return nil, fmt.Errorf("sqlite: unmarshal extension bindTo for %s: %w", row.ID, err)
+		}
+	}
+	if row.Install != "" {
+		if err := json.Unmarshal([]byte(row.Install), &rec.Install); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal extension install for %s: %w", row.ID, err)
 		}
 	}
 	return rec, nil

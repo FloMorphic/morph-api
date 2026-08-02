@@ -31,8 +31,22 @@
 ARG PLUGINS_REPO=https://github.com/FloMorphic/builtin-plugins.git
 ARG PLUGINS_REF=main
 
+# Go module proxy, overridable because the default CDN is not reachable
+# everywhere: proxy.golang.org redirects module zips to storage.googleapis.com,
+# and networks that block it answer 403 mid-download. Point it at a mirror then:
+#   docker build --build-arg GOPROXY=https://goproxy.cn,direct -t flomorphic-api:local .
+ARG GOPROXY="https://proxy.golang.org,direct"
+
 # ── the API ───────────────────────────────────────────────────────────────────
 FROM golang:1.26-alpine AS api-build
+ARG GOPROXY
+# sqlite-vec's amalgamation contains, for every non-Windows/wasm target:
+#   typedef u_int8_t uint8_t;  (and u_int16_t / u_int64_t)
+# `u_int*_t` is a BSD/glibc spelling that musl does not define, so on Alpine the
+# typedefs collapse to implicit int and the file fails to compile. Mapping them
+# to the C99 names makes those lines legal self-typedefs; on glibc it is a no-op.
+# Drop this the day sqlite-vec guards that block on __GLIBC__.
+ARG MUSL_CFLAGS="-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int64_t=uint64_t"
 RUN apk add --no-cache git make build-base
 WORKDIR /src
 # Modules first: they only change when go.mod/go.sum do, so the download layer
@@ -40,12 +54,16 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN make build BINARY=/out/flomorphic-api
+# CGO_CFLAGS on the command line overrides the Makefile's own assignment, so the
+# vendored sqlite3.h include has to be restated alongside the musl fix.
+RUN make build BINARY=/out/flomorphic-api \
+      CGO_CFLAGS="-I/src/repository/sqlite/cdeps $MUSL_CFLAGS"
 
 # ── the builtin plugin nodes (pure Go, one binary per folder) ─────────────────
 FROM golang:1.26-alpine AS plugins-build
 ARG PLUGINS_REPO
 ARG PLUGINS_REF
+ARG GOPROXY
 RUN apk add --no-cache git
 RUN git clone --depth 1 -b "$PLUGINS_REF" "$PLUGINS_REPO" /src/plugins
 # Every top-level folder with a go.mod is a plugin, so a new plugin in that repo
@@ -75,7 +93,11 @@ COPY --from=api-build     /src/repository/sqlite/seed /app/seed
 
 ARG PLUGINS_REPO
 ARG PLUGINS_REF
-ENV PORT=8025 \
+ARG GOPROXY
+# Carried into the container so a runtime plugin rebuild (a changed PLUGINS_REF)
+# uses the same reachable proxy the image was built with.
+ENV GOPROXY=${GOPROXY} \
+    PORT=8025 \
     DB_SOURCE=/data/flomorphic.db \
     APP_DIR=/app \
     PLUGIN_BIN_DIR=/app/plugins \
@@ -92,9 +114,11 @@ COPY <<'EOF' /usr/local/bin/entrypoint.sh
 set -eu
 [ "$#" -gt 0 ] && exec "$@"
 
+# stdout for all three: docker merges the streams with no ordering guarantee
+# between them, so a warning sent to stderr surfaces out of sequence.
 log()  { printf '[flomorphic-api] %s\n' "$*"; }
-warn() { printf '[flomorphic-api] ! %s\n' "$*" >&2; }
-die()  { printf '[flomorphic-api] error: %s\n' "$*" >&2; exit 1; }
+warn() { printf '[flomorphic-api] ! %s\n' "$*"; }
+die()  { printf '[flomorphic-api] error: %s\n' "$*"; exit 1; }
 
 is_true() {
     case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in

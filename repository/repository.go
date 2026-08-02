@@ -188,6 +188,12 @@ type ExtensionRepository interface {
 	// (matched by name). It never overwrites an existing builtin, so admin edits
 	// survive restarts. Returns the number of rows inserted.
 	SeedBuiltins(ctx context.Context, defs []models.ExtensionRecord) (int, error)
+	// DeletePluginActions drops the palette rows derived from one plugin's
+	// `@actions` (those with a non-empty Action), keeping the plugin's own
+	// registration row. The sync pass replaces derived rows wholesale, so a
+	// method the plugin no longer exposes leaves the palette with it. Returns
+	// the number of rows removed.
+	DeletePluginActions(ctx context.Context, pluginID string) (int, error)
 }
 
 // Store aggregates the per-entity repositories behind one handle and owns the

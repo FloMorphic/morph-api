@@ -29,6 +29,9 @@ type Extension struct {
 	Icon        string
 	Params      string
 	BindTo      string
+	Install     string
+	Action      string
+	ParentID    string
 	CreatedAt   int64
 	UpdatedAt   int64
 }

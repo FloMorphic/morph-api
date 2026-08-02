@@ -39,8 +39,23 @@ func (q *Queries) DeleteExtension(ctx context.Context, id string) (int64, error)
 	return result.RowsAffected()
 }
 
+const deletePluginActions = `-- name: DeletePluginActions :execrows
+DELETE FROM extensions WHERE plugin_id = ?1 AND action <> ''
+`
+
+// Drop every palette row derived from one plugin's @actions, leaving the
+// plugin's own registration row (action = ”) alone. The sync pass replaces
+// rather than merges, so a method the plugin dropped disappears with it.
+func (q *Queries) DeletePluginActions(ctx context.Context, pluginID string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deletePluginActions, pluginID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const getBuiltinByName = `-- name: GetBuiltinByName :one
-SELECT id, kind, type, name, description, plugin_id, icon, params, bind_to, created_at, updated_at FROM extensions WHERE kind = 'builtin' AND name = ?1
+SELECT id, kind, type, name, description, plugin_id, icon, params, bind_to, install, "action", parent_id, created_at, updated_at FROM extensions WHERE kind = 'builtin' AND name = ?1
 `
 
 func (q *Queries) GetBuiltinByName(ctx context.Context, name string) (Extension, error) {
@@ -56,6 +71,9 @@ func (q *Queries) GetBuiltinByName(ctx context.Context, name string) (Extension,
 		&i.Icon,
 		&i.Params,
 		&i.BindTo,
+		&i.Install,
+		&i.Action,
+		&i.ParentID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -63,7 +81,7 @@ func (q *Queries) GetBuiltinByName(ctx context.Context, name string) (Extension,
 }
 
 const getExtension = `-- name: GetExtension :one
-SELECT id, kind, type, name, description, plugin_id, icon, params, bind_to, created_at, updated_at FROM extensions WHERE id = ?1
+SELECT id, kind, type, name, description, plugin_id, icon, params, bind_to, install, "action", parent_id, created_at, updated_at FROM extensions WHERE id = ?1
 `
 
 func (q *Queries) GetExtension(ctx context.Context, id string) (Extension, error) {
@@ -79,6 +97,9 @@ func (q *Queries) GetExtension(ctx context.Context, id string) (Extension, error
 		&i.Icon,
 		&i.Params,
 		&i.BindTo,
+		&i.Install,
+		&i.Action,
+		&i.ParentID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -86,7 +107,7 @@ func (q *Queries) GetExtension(ctx context.Context, id string) (Extension, error
 }
 
 const listExtensions = `-- name: ListExtensions :many
-SELECT id, kind, type, name, description, plugin_id, icon, params, bind_to, created_at, updated_at FROM extensions
+SELECT id, kind, type, name, description, plugin_id, icon, params, bind_to, install, "action", parent_id, created_at, updated_at FROM extensions
 WHERE (?1 = '' OR name LIKE '%' || ?1 || '%')
   AND (?2 = '' OR kind = ?2)
 ORDER BY updated_at DESC, id DESC
@@ -124,6 +145,9 @@ func (q *Queries) ListExtensions(ctx context.Context, arg ListExtensionsParams) 
 			&i.Icon,
 			&i.Params,
 			&i.BindTo,
+			&i.Install,
+			&i.Action,
+			&i.ParentID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -142,9 +166,9 @@ func (q *Queries) ListExtensions(ctx context.Context, arg ListExtensionsParams) 
 
 const upsertExtension = `-- name: UpsertExtension :exec
 INSERT INTO extensions (
-    id, kind, type, name, description, plugin_id, icon, params, bind_to, created_at, updated_at
+    id, kind, type, name, description, plugin_id, icon, params, bind_to, install, action, parent_id, created_at, updated_at
 ) VALUES (
-    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11
+    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
 )
 ON CONFLICT(id) DO UPDATE SET
     kind = excluded.kind,
@@ -155,6 +179,9 @@ ON CONFLICT(id) DO UPDATE SET
     icon = excluded.icon,
     params = excluded.params,
     bind_to = excluded.bind_to,
+    install = excluded.install,
+    action = excluded.action,
+    parent_id = excluded.parent_id,
     updated_at = excluded.updated_at
 `
 
@@ -168,6 +195,9 @@ type UpsertExtensionParams struct {
 	Icon        string
 	Params      string
 	BindTo      string
+	Install     string
+	Action      string
+	ParentID    string
 	CreatedAt   int64
 	UpdatedAt   int64
 }
@@ -183,6 +213,9 @@ func (q *Queries) UpsertExtension(ctx context.Context, arg UpsertExtensionParams
 		arg.Icon,
 		arg.Params,
 		arg.BindTo,
+		arg.Install,
+		arg.Action,
+		arg.ParentID,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
