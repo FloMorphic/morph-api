@@ -48,7 +48,7 @@ func LoadSvcNodehandlers(store repository.Store) error {
 
 	// Human-in-the-Loop: when a workflow reaches a `humanInLoop` node the engine
 	// publishes here. svc.HandleHumanTask records the task (pid / flowId / nodeId /
-	// contextId + questions), captures the node's outbound edges, and replies with
+	// contextId + the resolved prompt), captures the node's outbound edges, and replies with
 	// a `stop` command so the runtime parks the flow until a resume run restarts
 	// from the captured nexts.
 	if err := svcHandler.ImplHandlerOnSubject(SvcHitl, svcHandler.SvcTopic(HitlSubject), func(header nats.Header, data []byte) ([]byte, error) {

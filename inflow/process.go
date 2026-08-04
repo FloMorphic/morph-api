@@ -10,6 +10,7 @@ import (
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
 	fuse "github.com/Inflowenger/inflow-fusion/inflow"
+	inflowModels "github.com/Inflowenger/inflow-fusion/models"
 	"github.com/bytedance/sonic"
 )
 
@@ -19,16 +20,24 @@ import (
 // independently of the engine's pid.
 const MetaIndexKey = "indexId"
 
+// MetaStartNodesKey is the RecordMeta key holding the run's full start-node set.
+// The process row's StartNodeID column carries only the first one (it is a
+// single column, and one node is all an ordinary run has), so a run started on
+// several nodes — a resume that picks up every branch a parked node fanned out
+// to — keeps the complete set here, which is what the scheduler relaunches from.
+const MetaStartNodesKey = "startNodeIds"
+
 // StartParams describes a workflow run to launch.
 type StartParams struct {
 	// FlowID is the workflow to run (required).
 	FlowID string
 	// ContextID is the context document the run reads/writes (required).
 	ContextID string
-	// StartNodeID overrides the flow's start node. Empty resolves the flow's
-	// `startNode`; a resume run sets it to a virtual start node whose outbounds
-	// are the parked next nodes (see RecordMeta).
-	StartNodeID string
+	// StartNodeIDs overrides the flow's start node. Empty resolves the flow's
+	// `startNode`. A resume run passes every next node the parked node fanned
+	// out to — the engine accepts a set of entry points and runs them all, so a
+	// multi-branch park resumes as the branches it actually had.
+	StartNodeIDs []string
 	// ReqMeta is extra ProcessRequest meta shipped to the engine (string map).
 	// It is a backend/controller injection point (e.g. an account tag) — never
 	// populated from a frontend request body — because the meta is assembled
@@ -36,7 +45,7 @@ type StartParams struct {
 	ReqMeta map[string]string
 	// RecordMeta is backend-only meta kept on the process row — most importantly
 	// the next-node list handed back when a run parks (human-in-the-loop), which
-	// a resume run rebuilds its virtual start node from. Never sent to the engine.
+	// a resume run is entered on. Never sent to the engine.
 	RecordMeta map[string]any
 	// ScheduledAt, when non-zero (epoch millis), records the run as `scheduled`
 	// and does NOT dispatch it — a scheduler launches it when the time is reached.
@@ -59,18 +68,27 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 		return nil, fmt.Errorf("contextId is required")
 	}
 
-	// Resolve the start node from the flow when the caller did not pin one.
-	startNodeID := params.StartNodeID
-	if strings.TrimSpace(startNodeID) == "" {
+	// Resolve the start node from the flow when the caller did not pin any.
+	startNodeIDs := nonEmpty(params.StartNodeIDs)
+	if len(startNodeIDs) == 0 {
 		rec, err := store.Workflows().GetByID(ctx, params.FlowID)
 		if err != nil {
 			return nil, fmt.Errorf("load flow %s: %w", params.FlowID, err)
 		}
-		startNodeID, err = GetStartNodeId(*rec)
+		startNodeID, err := GetStartNodeId(*rec)
 		if err != nil {
 			return nil, err
 		}
+		startNodeIDs = []string{startNodeID}
 	}
+
+	// The row's column holds one node; the full set travels on the record meta so
+	// a scheduled row can be relaunched on all of them (see MetaStartNodesKey).
+	recordMeta := map[string]any{}
+	for k, v := range params.RecordMeta {
+		recordMeta[k] = v
+	}
+	recordMeta[MetaStartNodesKey] = startNodeIDs
 
 	// Create the row first so the auto-increment index_id is assigned; it is the
 	// indexId echoed into request meta below.
@@ -78,8 +96,8 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 	rec := &models.Process{
 		FlowID:      params.FlowID,
 		ContextID:   params.ContextID,
-		StartNodeID: startNodeID,
-		Meta:        params.RecordMeta,
+		StartNodeID: startNodeIDs[0],
+		Meta:        recordMeta,
 		ScheduledAt: params.ScheduledAt,
 		Status:      models.ProcessRunning,
 		StartedAt:   now,
@@ -99,7 +117,7 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 	}
 	reqMeta[MetaIndexKey] = strconv.FormatInt(rec.IndexID, 10)
 
-	p, err := fuse.NewProcess(startNodeID,
+	p, err := fuse.NewProcess(startNodeIDs,
 		fuse.WithFlowId(params.FlowID),
 		fuse.WithContextDocument(params.ContextID),
 		fuse.WithMeta(reqMeta),
@@ -139,8 +157,56 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 		rec.PID = resp.Data.PID
 		_ = store.Processes().Update(ctx, rec)
 	}
-	fmt.Printf("process: launched %d (pid=%s flow=%s node=%s)\n", rec.IndexID, rec.PID, rec.FlowID, rec.StartNodeID)
+	fmt.Printf("process: launched %d (pid=%s flow=%s nodes=%v)\n", rec.IndexID, rec.PID, rec.FlowID, startNodeIDs)
 	return rec, nil
+}
+
+// nonEmpty returns the blank-free subset of ids, preserving order. A caller that
+// builds its start set from captured edges can hand over whatever it found
+// without pre-filtering.
+func nonEmpty(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) != "" {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// nextNodeIDs is the node id of every outbound edge a parked node handed back,
+// in edge order — the entry set a resume run is launched on.
+func nextNodeIDs(nexts []inflowModels.Next) []string {
+	ids := make([]string, 0, len(nexts))
+	for _, n := range nexts {
+		ids = append(ids, n.NodeId)
+	}
+	return nonEmpty(ids)
+}
+
+// startNodesFor recovers a recorded run's full start-node set: the meta list
+// when one was kept, otherwise the row's single column (any row written before
+// multi-node starts existed).
+func startNodesFor(rec *models.Process) []string {
+	if raw, ok := rec.Meta[MetaStartNodesKey]; ok {
+		if list, ok := raw.([]any); ok {
+			ids := make([]string, 0, len(list))
+			for _, v := range list {
+				if s, ok := v.(string); ok {
+					ids = append(ids, s)
+				}
+			}
+			if ids = nonEmpty(ids); len(ids) > 0 {
+				return ids
+			}
+		}
+		if list, ok := raw.([]string); ok {
+			if ids := nonEmpty(list); len(ids) > 0 {
+				return ids
+			}
+		}
+	}
+	return nonEmpty([]string{rec.StartNodeID})
 }
 
 // StopWorkflow asks the engine to stop the run behind a process row (by its

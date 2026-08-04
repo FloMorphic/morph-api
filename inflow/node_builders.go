@@ -257,14 +257,14 @@ func buildPluginActionNode(node *inflowModels.Node, vfn compiler.VueFlowNode, no
 
 // buildHitlNode lowers a Human-in-the-Loop node to an extrinsic call to this
 // backend's `hitl` svc. The subject carries the nodeId so the handler can
-// recover it; the Data payload carries the node's whole session config.
+// recover it; the operation payload carries the node's whole session config.
 //
-// Everything the session needs has to travel here, at compile time. An extrinsic
-// svc handler runs outside the flow's expression scope, so it can neither read
-// the graph nor resolve a context path — which is why `prompt` is shipped as an
-// unresolved TEMPLATE alongside the `refs` it needs. The handler records both on
-// the task; they are resolved later, when a person opens the session, against
-// the scoped data snapshot taken at the moment the flow reached this node.
+// The `prompt` is shipped exactly as the designer wrote it, `{{$.path}}`
+// variables and all: the runtime resolves every JSONPath it finds in an
+// extrinsic's operation payload against the run's context before delivering it,
+// so the handler receives finished text — the message stack an upstream MCP/LLM
+// node built, the question it ended on — and records a session ready to show a
+// person.
 //
 // `mode` decides what the handler answers the runtime with (park → stop here,
 // continue → carry on) and `channel` where the conversation is held; both are
@@ -280,17 +280,19 @@ func buildHitlNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData m
 	evNode := inflowNodes.NewExtrinsicSvcNode(string(subject), inflowNodes.WithUniqId[*inflowNodes.ExtrinsicSvcNode](vfn.ID))
 	evNode.ExtrinsicRule.ReqTimeoutSecound = 10
 	payload := map[string]any{"nodeId": vfn.ID}
-	// title/prompt/refs/questions are shipped as authored; mode and channel are
-	// normalised so a node saved before these fields existed still compiles to
-	// the behaviour it used to have (park, answered in the app).
-	for _, k := range []string{"title", "prompt", "refs", "questions"} {
+	// title/prompt are shipped as authored; mode and channel are normalised so a
+	// node saved before these fields existed still compiles to the behaviour it
+	// used to have (park, answered in the app). Nothing else travels: a HITL node
+	// carries no question list, because what has to be asked is worked out in the
+	// session, not on the canvas.
+	for _, k := range []string{"title", "prompt"} {
 		if v, ok := nodeData[k]; ok && v != nil {
 			payload[k] = v
 		}
 	}
 	payload["mode"] = hitlMode(getStr(nodeData, "mode"))
 	payload["channel"] = hitlChannel(getStr(nodeData, "channel"))
-	evNode.ExtrinsicRule.Data = payload
+	evNode.ExtrinsicRule.OperationData = payload
 	node.Extrinsic = &evNode.ExtrinsicRule
 	return nil
 }
@@ -345,7 +347,7 @@ func buildStoreNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData 
 			payload[k] = v
 		}
 	}
-	evNode.ExtrinsicRule.Data = payload
+	evNode.ExtrinsicRule.OperationData = payload
 	node.Extrinsic = &evNode.ExtrinsicRule
 	return nil
 }
@@ -375,7 +377,7 @@ func buildUntilNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData 
 		// Legacy nodes carried delaySeconds directly (pre unit/value modes).
 		payload["delaySeconds"] = int64(getFloat(nodeData, "delaySeconds"))
 	}
-	evNode.ExtrinsicRule.Data = payload
+	evNode.ExtrinsicRule.OperationData = payload
 	node.Extrinsic = &evNode.ExtrinsicRule
 	return nil
 }

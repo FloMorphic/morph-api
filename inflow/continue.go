@@ -55,17 +55,14 @@ func HandleContinueAfter(store repository.Store, header nats.Header, data []byte
 		scheduledAt = nowMillis() + op.DelaySeconds*1000
 	}
 
-	// The outbound nodes captured for the resume — the resumed run starts from the
-	// first next node, and the full list is kept on Meta for a (future) multi-next
-	// virtual start node.
+	// The outbound nodes captured for the resume — the resumed run starts from
+	// every one of them, so a Continue After that fanned out resumes as the
+	// branches it actually had.
 	var nexts []inflowModels.Next
 	if body.Node != nil {
 		nexts = body.Node.Next
 	}
-	startNodeID := ""
-	if len(nexts) > 0 {
-		startNodeID = nexts[0].NodeId
-	}
+	startNodeIDs := nextNodeIDs(nexts)
 
 	if strings.TrimSpace(flowID) == "" || strings.TrimSpace(contextID) == "" {
 		return nil, fmt.Errorf("continue.at: missing flowId/contextId on request (flow=%q ctx=%q)", flowID, contextID)
@@ -85,11 +82,11 @@ func HandleContinueAfter(store repository.Store, header nats.Header, data []byte
 	}
 
 	rec, err := StartWorkflow(context.Background(), store, StartParams{
-		FlowID:      flowID,
-		ContextID:   contextID,
-		StartNodeID: startNodeID,
-		ScheduledAt: scheduledAt,
-		RecordMeta:  recordMeta,
+		FlowID:       flowID,
+		ContextID:    contextID,
+		StartNodeIDs: startNodeIDs,
+		ScheduledAt:  scheduledAt,
+		RecordMeta:   recordMeta,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("continue.at: schedule resume: %w", err)

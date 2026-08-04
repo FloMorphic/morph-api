@@ -18,8 +18,11 @@ import (
 // inserted, see inflow.StartWorkflow). The frontend supplies only what
 // identifies the run and any backend-only record meta.
 type startInput struct {
-	FlowID      string         `json:"flowId"`
-	ContextID   string         `json:"contextId"`
+	FlowID    string `json:"flowId"`
+	ContextID string `json:"contextId"`
+	// StartNodeID pins the entry node; empty runs the flow's own start node.
+	// One node is all a manual launch needs — the multi-node form exists for
+	// resumes, which the backend builds itself (see inflow.StartParams).
 	StartNodeID string         `json:"startNodeId"`
 	Meta        map[string]any `json:"meta"`
 	ScheduledAt int64          `json:"scheduledAt"`
@@ -39,11 +42,11 @@ func (ctl *controller) start(c fiber.Ctx) error {
 		return etc.Fail(c, fiber.StatusBadRequest, "contextId is required")
 	}
 	rec, err := inflow.StartWorkflow(c.Context(), ctl.store, inflow.StartParams{
-		FlowID:      in.FlowID,
-		ContextID:   in.ContextID,
-		StartNodeID: in.StartNodeID,
-		RecordMeta:  in.Meta,
-		ScheduledAt: in.ScheduledAt,
+		FlowID:       in.FlowID,
+		ContextID:    in.ContextID,
+		StartNodeIDs: []string{in.StartNodeID},
+		RecordMeta:   in.Meta,
+		ScheduledAt:  in.ScheduledAt,
 		// ReqMeta is intentionally not taken from the request body — the backend
 		// assembles the engine meta (indexId + any controller-supplied extras).
 	})

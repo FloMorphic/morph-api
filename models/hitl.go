@@ -5,8 +5,9 @@ import fuseModels "github.com/Inflowenger/inflow-fusion/models"
 // HumanTaskStatus is the lifecycle of a Human-in-the-Loop task.
 //
 //   - open:     created by a running workflow, awaiting human answers.
-//   - answered: every question has an answer; the flow may continue.
-//   - closed:   force-finished by the human; the workflow ends at this step.
+//   - answered: every question has an answer; the person can close the session.
+//   - closed:   the person is done. For a `park` task this is what releases the
+//     flow: a fresh run is entered on the captured next nodes.
 type HumanTaskStatus string
 
 const (
@@ -15,8 +16,14 @@ const (
 	HumanTaskClosed   HumanTaskStatus = "closed"
 )
 
-// HumanTaskQuestion is one question the workflow posed to the human. The human
-// answers each; when all are answered the task flips to `answered`.
+// HumanTaskQuestion is one question put to the person during the session.
+//
+// Questions are NOT declared on the node: a flow hands over to a human exactly
+// when it could not settle something itself, so what has to be asked is not
+// knowable at design time. They are worked out in the conversation — from the
+// run's history, against the node's prompt — and appended here as they are
+// raised, so a freshly recorded task has none. When every one carries an answer
+// the task flips to `answered`.
 type HumanTaskQuestion struct {
 	ID         string `json:"id"`
 	Text       string `json:"text"`
@@ -52,17 +59,6 @@ const (
 	HumanTaskWhatsapp HumanTaskChannel = "whatsapp"
 )
 
-// HumanTaskRef is one named pointer into the run's context that the node
-// declared. An extrinsic svc handler runs outside the flow's expression scope
-// and cannot resolve paths at run time, so the path is recorded as written and
-// resolved on read (see the hitl controller) against the Data snapshot the node
-// captured. `Value` is that resolution — computed per read, never persisted.
-type HumanTaskRef struct {
-	Name  string `json:"name"`
-	Path  string `json:"path"`
-	Value any    `json:"value,omitempty"`
-}
-
 // HumanTaskMessage is one turn of the free-form chat thread the human uses to
 // understand the task's context. The LLM assistant reply is produced on the
 // frontend; the backend only stores/returns the thread.
@@ -85,37 +81,37 @@ type HumanTaskMessage struct {
 // JSON tags mirror flomorphic-wapp's HumanTask interface so the wire shape is
 // drop-in for the web app.
 type HumanTask struct {
-	ID        string              `json:"id"`
-	Title     string              `json:"title"`
-	Status    HumanTaskStatus     `json:"status"`
-	PID       string              `json:"pid"`
-	FlowID    string              `json:"flowId"`
-	NodeID    string              `json:"nodeId"`
-	ContextID string              `json:"contextId"`
-	// Mode / Channel / Prompt / Refs are the node's design-time session config,
-	// shipped whole in the extrinsic's `op` payload because the handler cannot
-	// evaluate anything against the flow at run time.
+	ID        string          `json:"id"`
+	Title     string          `json:"title"`
+	Status    HumanTaskStatus `json:"status"`
+	PID       string          `json:"pid"`
+	FlowID    string          `json:"flowId"`
+	NodeID    string          `json:"nodeId"`
+	ContextID string          `json:"contextId"`
+	// Mode / Channel / Prompt are the node's design-time session config, carried
+	// in the extrinsic's `op` payload.
 	Mode    HumanTaskMode    `json:"mode,omitempty"`
 	Channel HumanTaskChannel `json:"channel,omitempty"`
-	// Prompt is the conversation opener as authored, `{{$.path}}` variables
-	// intact — it is a template, not text ready to show a person.
+	// Prompt is the conversation opener, ready to show a person: the node writes
+	// it with `{{$.path}}` variables and the runtime resolves them against the
+	// run's context before the svc handler is called, so what lands here is the
+	// subject matter itself — the message stack an upstream node built, the
+	// question it ended on.
 	Prompt string `json:"prompt,omitempty"`
-	// PromptResolved is Prompt with those variables filled in from Data. It is
-	// produced when the task is read and is deliberately NOT persisted: the
-	// template plus the snapshot are the durable facts, the rendering is not.
-	PromptResolved string              `json:"promptResolved,omitempty"`
-	Refs           []HumanTaskRef      `json:"refs,omitempty"`
-	Questions      []HumanTaskQuestion `json:"questions"`
-	Messages       []HumanTaskMessage  `json:"messages"`
-	Data           map[string]any      `json:"data,omitempty"`
+	// Questions are raised during the session, not by the node — see
+	// HumanTaskQuestion. Empty on a freshly recorded task.
+	Questions []HumanTaskQuestion `json:"questions"`
+	Messages  []HumanTaskMessage  `json:"messages"`
+	Data      map[string]any      `json:"data,omitempty"`
 	// Nexts is the parked node's outbound edge list, captured from the svc
-	// request's Node.Next when the flow reached this HITL node. It is kept so a
-	// future run can resume the flow from exactly these next nodes (the HITL
-	// handler tells the runtime to stop after the node, dropping its next).
-	Nexts []fuseModels.Next `json:"nexts,omitempty"`
-	CreatedAt int64               `json:"createdAt"`
-	UpdatedAt int64               `json:"updatedAt"`
-	ClosedAt  int64               `json:"closedAt"`
+	// request's Node.Next when the flow reached this HITL node. Closing the task
+	// starts a fresh run entered on every one of these nodes — see
+	// inflow.ResumeHumanTask — which is the whole reason a `park` can tell the
+	// runtime to stop and still not lose the rest of the workflow.
+	Nexts     []fuseModels.Next `json:"nexts,omitempty"`
+	CreatedAt int64             `json:"createdAt"`
+	UpdatedAt int64             `json:"updatedAt"`
+	ClosedAt  int64             `json:"closedAt"`
 }
 
 // AllAnswered reports whether every question carries a non-empty answer. An

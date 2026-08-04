@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/FloMorphic/morph-api/etc"
+	"github.com/FloMorphic/morph-api/inflow"
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
 	"github.com/gofiber/fiber/v3"
@@ -36,16 +37,11 @@ func (ctl *controller) list(c fiber.Ctx) error {
 }
 
 // getByID handles GET /hitl/id/:id — open a task as a conversation.
-//
-// This is where the session's prompt and context refs are rendered: the svc
-// handler could not resolve them at run time, so opening the task is the first
-// moment they can become text. See resolveSession.
 func (ctl *controller) getByID(c fiber.Ctx) error {
 	rec, err := ctl.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
 		return etc.FailFromRepo(c, err, "human task not found")
 	}
-	resolveSession(rec)
 	return etc.OK(c, rec)
 }
 
@@ -68,7 +64,6 @@ func (ctl *controller) answer(c fiber.Ctx) error {
 	if err != nil {
 		return etc.FailFromRepo(c, err, "human task not found")
 	}
-	resolveSession(rec)
 	return etc.OK(c, rec)
 }
 
@@ -99,18 +94,38 @@ func (ctl *controller) message(c fiber.Ctx) error {
 	if err != nil {
 		return etc.FailFromRepo(c, err, "human task not found")
 	}
-	resolveSession(rec)
 	return etc.OK(c, rec)
 }
 
-// close handles POST /hitl/id/:id/close — force-finish the task; the workflow
-// terminates at this step.
+// close handles POST /hitl/id/:id/close — finish the session and, for a task
+// whose node parked the flow, continue that flow from where it stopped.
+//
+// Closing is what ends the person's turn, so it is also what releases the run:
+// inflow.ResumeHumanTask launches a fresh run entered on every next node the
+// parked node captured. A task that never parked its flow (`continue` mode) or
+// had no outbound edges simply closes, with no run to start.
+//
+// An already-closed task is not resumed again — closing is idempotent on the
+// record, but launching a run is not.
 func (ctl *controller) close(c fiber.Ctx) error {
+	before, err := ctl.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		return etc.FailFromRepo(c, err, "human task not found")
+	}
+	alreadyClosed := before.Status == models.HumanTaskClosed
+
 	rec, err := ctl.repo.Close(c.Context(), c.Params("id"))
 	if err != nil {
 		return etc.FailFromRepo(c, err, "human task not found")
 	}
-	resolveSession(rec)
+	if alreadyClosed {
+		return etc.OK(c, rec)
+	}
+	if _, err := inflow.ResumeHumanTask(c.Context(), ctl.store, rec); err != nil {
+		// The session is closed either way — report the failed resume, but hand
+		// back the task so the UI reflects the state that was actually reached.
+		return etc.Send(c, fiber.StatusBadGateway, rec, err.Error())
+	}
 	return etc.OK(c, rec)
 }
 

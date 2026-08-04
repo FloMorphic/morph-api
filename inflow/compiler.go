@@ -28,13 +28,13 @@ const items: PaletteItem[] = [
 */
 const (
 	// Legacy / generic inflow node kinds still handled by the compiler.
-	// just void , contract, goto , nativley comes from inflow , others compiled to inflow native 
+	// just void , contract, goto , nativley comes from inflow , others compiled to inflow native
 	// NODE_PLUGIN   = "pluginNative"
 	NODE_VOID     = "void"
 	NODE_CONTRACT = "contract"
 	// NODE_CODE     = "code"
 	// NODE_EXT_SVC  = "extrinsic"
-	NODE_GOTO     = "goto"
+	NODE_GOTO = "goto"
 
 	// FloMorphic builtin morphic types (see models/extension.go). Each lowers to
 	// an inflow primitive below.
@@ -63,8 +63,6 @@ const (
 	SubjectStoreVec = "svc.store.vec.{ACTION}"
 	// ContinueSubject records/parks a run to resume its outbound nodes at a time.
 	ContinueSubject = "svc.continue.at"
-
-
 )
 
 func GetStartNodeId(f models.FlowRecord) (string, error) {

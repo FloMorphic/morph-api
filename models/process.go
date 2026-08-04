@@ -35,9 +35,12 @@ const (
 //
 // Request is the ProcessRequest snapshot sent to the engine. Meta is a free-form
 // object the backend keeps alongside — most importantly the next-node list a
-// human-in-the-loop (or other extrinsic) hands back when it parks a run, from
-// which the resume request rebuilds a virtual start node whose outbounds are
-// those next nodes.
+// human-in-the-loop (or other extrinsic) hands back when it parks a run, which
+// the resume run is entered on directly: the engine takes a set of start nodes,
+// so every branch the parked node fanned out to resumes as itself.
+//
+// StartNodeID is the first of those, not necessarily the only one — see
+// inflow.MetaStartNodesKey for where the complete set is kept.
 type Process struct {
 	IndexID     int64          `json:"indexId"`
 	PID         string         `json:"pid"`

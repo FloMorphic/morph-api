@@ -47,7 +47,6 @@ type HumanTask struct {
 	Mode      string
 	Channel   string
 	Prompt    string
-	Refs      string
 	Questions string
 	Messages  string
 	Data      string

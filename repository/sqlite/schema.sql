@@ -49,12 +49,11 @@ CREATE TABLE IF NOT EXISTS prompts (
 );
 
 -- Human-in-the-Loop tasks. Created by the inflow svc handler when a workflow
--- reaches a `humanInLoop` node (never via the REST API). `questions`, `messages`
--- and `refs` are JSON arrays; `data` is the scoped-data snapshot the node
+-- reaches a `humanInLoop` node (never via the REST API). `questions` and
+-- `messages` are JSON arrays; `data` is the scoped-data snapshot the node
 -- captured. `mode` (park/continue) and `channel` (direct/telegram/whatsapp) are
 -- the node's design-time session config, and `prompt` is the conversation
--- opener as authored — an unresolved template, since the svc handler cannot
--- evaluate `{{$.path}}` variables at run time; they are resolved on read.
+-- opener with its context variables already resolved by the runtime.
 CREATE TABLE IF NOT EXISTS human_tasks (
     id         TEXT    PRIMARY KEY,
     title      TEXT    NOT NULL DEFAULT '',
@@ -66,7 +65,6 @@ CREATE TABLE IF NOT EXISTS human_tasks (
     mode       TEXT    NOT NULL DEFAULT 'park',
     channel    TEXT    NOT NULL DEFAULT 'direct',
     prompt     TEXT    NOT NULL DEFAULT '',
-    refs       TEXT    NOT NULL DEFAULT '[]',
     questions  TEXT    NOT NULL DEFAULT '[]',
     messages   TEXT    NOT NULL DEFAULT '[]',
     data       TEXT    NOT NULL DEFAULT '{}',
@@ -96,8 +94,8 @@ CREATE TABLE IF NOT EXISTS node_settings (
 -- via a plain REST create — and closed out from the engine's `inflow.event.log`
 -- proc.finish event. `request` is the ProcessRequest snapshot sent to the engine
 -- and `meta` is a free-form object (e.g. the next-node list captured when a
--- human-in-the-loop node parks the run, so the resume request can rebuild a
--- virtual start node from it).
+-- human-in-the-loop node parks the run, which the resume run is entered on, and
+-- `startNodeIds` — the full entry set, of which `start_node_id` is the first).
 --
 -- `index_id` is the *indexId*: an auto-increment integer that is the row's
 -- identity and is echoed into the ProcessRequest meta (and so travels as a

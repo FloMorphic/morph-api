@@ -161,7 +161,9 @@ func (s *Scheduler) launch(ctx context.Context, rec *models.Process) error {
 		}
 	}
 
-	p, err := fuse.NewProcess(rec.StartNodeID,
+	// Relaunch on every node the row was recorded to start from — a resume that
+	// picked up several parked branches must not collapse to its first one.
+	p, err := fuse.NewProcess(startNodesFor(rec),
 		fuse.WithFlowId(rec.FlowID),
 		fuse.WithContextDocument(rec.ContextID),
 		fuse.WithMeta(reqMeta),
