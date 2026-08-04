@@ -12,7 +12,7 @@
     "kind": "builtin",
     "type": "hitl",
     "name": "Human in the Loop",
-    "description": "Pause the flow and wait for a person to answer. Compiles to an Extrinsic on the hitl service (svc.hitl.add).",
+    "description": "Hand the flow to a person: open a conversation from a context-built prompt and collect their answers, either parking the run until they are done or recording the task and carrying on. Compiles to an Extrinsic on the hitl service (svc.hitl.add).",
     "icon": { "class": "flomorphic", "name": "node-human", "meta": {} },
     "params": { "schema": {}, "ui": {} },
     "bindTo": { "topic_key": "svc.hitl.add", "values": {} }

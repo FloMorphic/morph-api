@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/FloMorphic/morph-api/models"
 	compiler "github.com/Inflowenger/inflow-fusion/compilers/vueFlow"
 	inflowModels "github.com/Inflowenger/inflow-fusion/models"
 	inflowNodes "github.com/Inflowenger/inflow-fusion/nodes"
@@ -256,8 +257,18 @@ func buildPluginActionNode(node *inflowModels.Node, vfn compiler.VueFlowNode, no
 
 // buildHitlNode lowers a Human-in-the-Loop node to an extrinsic call to this
 // backend's `hitl` svc. The subject carries the nodeId so the handler can
-// recover it; the Data payload carries the title/questions to record on the
-// task.
+// recover it; the Data payload carries the node's whole session config.
+//
+// Everything the session needs has to travel here, at compile time. An extrinsic
+// svc handler runs outside the flow's expression scope, so it can neither read
+// the graph nor resolve a context path — which is why `prompt` is shipped as an
+// unresolved TEMPLATE alongside the `refs` it needs. The handler records both on
+// the task; they are resolved later, when a person opens the session, against
+// the scoped data snapshot taken at the moment the flow reached this node.
+//
+// `mode` decides what the handler answers the runtime with (park → stop here,
+// continue → carry on) and `channel` where the conversation is held; both are
+// read back by svc.HandleHumanTask.
 func buildHitlNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData map[string]any) error {
 	node.Type = inflowModels.ExtrinsicNodeType
 	subject := svcHandler.GetSvc(SvcHitl)
@@ -265,19 +276,44 @@ func buildHitlNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData m
 		subject = svcHandler.SvcTopic(HitlSubject)
 	}
 	// The nodeId travels as the node's uniqId; the Data carries what the hitl
-	// handler records on the task (title / questions).
+	// handler records on the task.
 	evNode := inflowNodes.NewExtrinsicSvcNode(string(subject), inflowNodes.WithUniqId[*inflowNodes.ExtrinsicSvcNode](vfn.ID))
 	evNode.ExtrinsicRule.ReqTimeoutSecound = 10
 	payload := map[string]any{"nodeId": vfn.ID}
-	if nodeData["title"] != nil {
-		payload["title"] = nodeData["title"]
+	// title/prompt/refs/questions are shipped as authored; mode and channel are
+	// normalised so a node saved before these fields existed still compiles to
+	// the behaviour it used to have (park, answered in the app).
+	for _, k := range []string{"title", "prompt", "refs", "questions"} {
+		if v, ok := nodeData[k]; ok && v != nil {
+			payload[k] = v
+		}
 	}
-	if nodeData["questions"] != nil {
-		payload["questions"] = nodeData["questions"]
-	}
+	payload["mode"] = hitlMode(getStr(nodeData, "mode"))
+	payload["channel"] = hitlChannel(getStr(nodeData, "channel"))
 	evNode.ExtrinsicRule.Data = payload
 	node.Extrinsic = &evNode.ExtrinsicRule
 	return nil
+}
+
+// hitlMode narrows the node's `mode` to a value the handler understands,
+// defaulting to park — the conservative one: the run waits for the person
+// instead of racing past them.
+func hitlMode(v string) string {
+	if v == string(models.HumanTaskContinue) {
+		return string(models.HumanTaskContinue)
+	}
+	return string(models.HumanTaskPark)
+}
+
+// hitlChannel narrows the node's `channel`, defaulting to the in-app chat — the
+// only one served end to end today.
+func hitlChannel(v string) string {
+	switch models.HumanTaskChannel(v) {
+	case models.HumanTaskTelegram, models.HumanTaskWhatsapp:
+		return v
+	default:
+		return string(models.HumanTaskDirect)
+	}
 }
 
 // buildStoreNode lowers a Doc / Vector store node to an extrinsic on

@@ -36,11 +36,16 @@ func (ctl *controller) list(c fiber.Ctx) error {
 }
 
 // getByID handles GET /hitl/id/:id — open a task as a conversation.
+//
+// This is where the session's prompt and context refs are rendered: the svc
+// handler could not resolve them at run time, so opening the task is the first
+// moment they can become text. See resolveSession.
 func (ctl *controller) getByID(c fiber.Ctx) error {
 	rec, err := ctl.repo.GetByID(c.Context(), c.Params("id"))
 	if err != nil {
 		return etc.FailFromRepo(c, err, "human task not found")
 	}
+	resolveSession(rec)
 	return etc.OK(c, rec)
 }
 
@@ -63,6 +68,7 @@ func (ctl *controller) answer(c fiber.Ctx) error {
 	if err != nil {
 		return etc.FailFromRepo(c, err, "human task not found")
 	}
+	resolveSession(rec)
 	return etc.OK(c, rec)
 }
 
@@ -93,6 +99,7 @@ func (ctl *controller) message(c fiber.Ctx) error {
 	if err != nil {
 		return etc.FailFromRepo(c, err, "human task not found")
 	}
+	resolveSession(rec)
 	return etc.OK(c, rec)
 }
 
@@ -103,6 +110,7 @@ func (ctl *controller) close(c fiber.Ctx) error {
 	if err != nil {
 		return etc.FailFromRepo(c, err, "human task not found")
 	}
+	resolveSession(rec)
 	return etc.OK(c, rec)
 }
 

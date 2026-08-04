@@ -44,6 +44,10 @@ type HumanTask struct {
 	FlowID    string
 	NodeID    string
 	ContextID string
+	Mode      string
+	Channel   string
+	Prompt    string
+	Refs      string
 	Questions string
 	Messages  string
 	Data      string

@@ -13,18 +13,38 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// hitlPayload is the compile-time `op` payload the HITL node carries (set in the
-// compiler's NODE_HITL case as ExtrinsicRule.Data): the node's title/questions
-// and its nodeId. The runtime delivers it under the request envelope's `op`
-// field. Fields are read defensively — any that are absent stay empty.
+// hitlPayload is the compile-time `op` payload the HITL node carries (set by
+// buildHitlNode as ExtrinsicRule.Data): the node's whole session config plus its
+// nodeId. The runtime delivers it under the request envelope's `op` field.
+// Fields are read defensively — any that are absent stay empty.
+//
+// Note what is deliberately NOT resolved here. This handler runs outside the
+// flow's expression scope, so Prompt arrives as a template with its
+// `{{$.path}}` variables intact and Refs as bare paths; both are recorded as-is
+// and rendered later, when a person opens the session, against the Data
+// snapshot captured below.
 type hitlPayload struct {
 	Title     string `json:"title"`
 	PID       string `json:"pid"`
 	FlowID    string `json:"flowId"`
 	NodeID    string `json:"nodeId"`
 	ContextID string `json:"contextId"`
+	// Mode is "park" (reply with a stop command; the run finishes here) or
+	// "continue" (reply plainly; the flow carries on through this node's next).
+	Mode string `json:"mode"`
+	// Channel is where the conversation is held: direct / telegram / whatsapp.
+	Channel string     `json:"channel"`
+	Prompt  string     `json:"prompt"`
+	Refs    []refInput `json:"refs"`
 	// Questions accepts either ["ask?", ...] or [{"id","text"}, ...].
 	Questions []questionInput `json:"questions"`
+}
+
+// refInput is one declared context pointer. The node editor also stamps a local
+// `id` on each row; it is a canvas concern and not read here.
+type refInput struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
 }
 
 // questionInput unmarshals a question given either as a bare string or an object.
@@ -50,9 +70,16 @@ func (q *questionInput) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// HandleHumanTask persists (upserts) the task for a HITL node execution, captures
-// the node's outbound edges for a future resume, and replies with a `stop`
-// command so the runtime parks the flow at this node.
+// HandleHumanTask persists (upserts) the task for a HITL node execution and
+// captures the node's outbound edges for a future resume.
+//
+// What it answers the runtime with is the node's `mode`:
+//
+//   - park (default): a `stop` command. The runtime drops this node's next and
+//     the run finishes here; the flow resumes later from the captured nexts.
+//   - continue: a plain success reply with no command, so the runtime carries
+//     straight on through this node's next. The task is still recorded — a
+//     person picks it up out of band rather than the run waiting on them.
 func HandleHumanTask(store repository.Store, header nats.Header, data []byte) ([]byte, error) {
 	// inflow-fusion delivers every extrinsic svc request as an envelope: the
 	// flow's live scoped `Data`, the compile-time `op` payload we set on the node
@@ -95,6 +122,33 @@ func HandleHumanTask(store repository.Store, header nats.Header, data []byte) ([
 		questions = append(questions, models.HumanTaskQuestion{ID: id, Text: q.Text})
 	}
 
+	// The declared context pointers, kept as written. A ref with no path points
+	// nowhere and is dropped; an unnamed one is labelled by its position so the
+	// session still has something to show it under.
+	refs := make([]models.HumanTaskRef, 0, len(req.Refs))
+	for i, r := range req.Refs {
+		path := strings.TrimSpace(r.Path)
+		if path == "" {
+			continue
+		}
+		name := strings.TrimSpace(r.Name)
+		if name == "" {
+			name = fmt.Sprintf("ref%d", i+1)
+		}
+		refs = append(refs, models.HumanTaskRef{Name: name, Path: path})
+	}
+
+	mode := models.HumanTaskMode(req.Mode)
+	if mode != models.HumanTaskContinue {
+		mode = models.HumanTaskPark
+	}
+	channel := models.HumanTaskChannel(req.Channel)
+	switch channel {
+	case models.HumanTaskTelegram, models.HumanTaskWhatsapp:
+	default:
+		channel = models.HumanTaskDirect
+	}
+
 	// Capture the node's outbound edges so a future run can resume the flow from
 	// exactly these nexts (we tell the runtime to stop after this node below).
 	var nexts []inflowModels.Next
@@ -113,20 +167,34 @@ func HandleHumanTask(store repository.Store, header nats.Header, data []byte) ([
 		FlowID:    flowID,
 		NodeID:    nodeID,
 		ContextID: contextID,
+		Mode:      mode,
+		Channel:   channel,
+		// The prompt template, unresolved on purpose (see hitlPayload).
+		Prompt:    req.Prompt,
+		Refs:      refs,
 		Questions: questions,
-		// The main scoped data at the moment the flow parked, kept for traceability.
+		// The main scoped data at the moment the flow parked. It is both the
+		// traceability record and what the prompt/refs are resolved against when
+		// the session opens, so a node whose `scope` is narrower than the paths
+		// its prompt uses will render them as empty.
 		Data:  scopedDataMap(body.Data),
 		Nexts: nexts,
 	}
 	if err := store.HumanTasks().Upsert(context.Background(), task); err != nil {
 		return nil, fmt.Errorf("record human task: %w", err)
 	}
-	fmt.Printf("hitl: recorded task %s (pid=%s flow=%s node=%s) with %d question(s), %d next(s)\n",
-		task.ID, pid, flowID, nodeID, len(questions), len(nexts))
+	fmt.Printf("hitl: recorded task %s mode=%s channel=%s (pid=%s flow=%s node=%s) with %d question(s), %d ref(s), %d next(s)\n",
+		task.ID, mode, channel, pid, flowID, nodeID, len(questions), len(refs), len(nexts))
 
-	// Reply with a stop command: the runtime clears this node's next and does not
-	// continue — the flow resumes later from the captured nexts.
-	return svcHandler.StopHereResponse(map[string]any{"taskId": task.ID, "status": task.Status})
+	reply := map[string]any{"taskId": task.ID, "status": task.Status, "mode": string(mode)}
+	if mode == models.HumanTaskContinue {
+		// No command: the runtime treats this as an ordinary successful extrinsic
+		// and continues into this node's next.
+		return sonic.Marshal(reply)
+	}
+	// Park: the runtime clears this node's next and does not continue — the flow
+	// resumes later from the captured nexts.
+	return svcHandler.StopHereResponse(reply)
 }
 
 func hitlTaskID(pid, nodeID string) string {

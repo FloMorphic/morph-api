@@ -168,6 +168,10 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE extensions ADD COLUMN install TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE extensions ADD COLUMN action TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE extensions ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE human_tasks ADD COLUMN mode TEXT NOT NULL DEFAULT 'park'`,
+		`ALTER TABLE human_tasks ADD COLUMN channel TEXT NOT NULL DEFAULT 'direct'`,
+		`ALTER TABLE human_tasks ADD COLUMN prompt TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE human_tasks ADD COLUMN refs TEXT NOT NULL DEFAULT '[]'`,
 	}
 	for _, stmt := range migrations {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

@@ -43,6 +43,17 @@ func (r *humanTaskRepo) Upsert(ctx context.Context, t *models.HumanTask) error {
 	if t.Messages == nil {
 		t.Messages = []models.HumanTaskMessage{}
 	}
+	if t.Refs == nil {
+		t.Refs = []models.HumanTaskRef{}
+	}
+	// A task recorded by an older node (or a malformed op payload) still gets the
+	// behaviour the node used to have: park, answered in the app.
+	if t.Mode == "" {
+		t.Mode = models.HumanTaskPark
+	}
+	if t.Channel == "" {
+		t.Channel = models.HumanTaskDirect
+	}
 
 	questions, err := json.Marshal(t.Questions)
 	if err != nil {
@@ -64,6 +75,17 @@ func (r *humanTaskRepo) Upsert(ctx context.Context, t *models.HumanTask) error {
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal human task nexts: %w", err)
 	}
+	// Only the declared pointers are stored; a Ref's resolved Value is recomputed
+	// on every read from the Data snapshot, so persisting it would just be a
+	// second copy of the same bytes that could drift.
+	refs := make([]models.HumanTaskRef, 0, len(t.Refs))
+	for _, ref := range t.Refs {
+		refs = append(refs, models.HumanTaskRef{Name: ref.Name, Path: ref.Path})
+	}
+	refsJSON, err := json.Marshal(refs)
+	if err != nil {
+		return fmt.Errorf("sqlite: marshal human task refs: %w", err)
+	}
 
 	return r.q.UpsertHumanTask(ctx, sqlcgen.UpsertHumanTaskParams{
 		ID:        t.ID,
@@ -73,6 +95,10 @@ func (r *humanTaskRepo) Upsert(ctx context.Context, t *models.HumanTask) error {
 		FlowID:    t.FlowID,
 		NodeID:    t.NodeID,
 		ContextID: t.ContextID,
+		Mode:      string(t.Mode),
+		Channel:   string(t.Channel),
+		Prompt:    t.Prompt,
+		Refs:      string(refsJSON),
 		Questions: string(questions),
 		Messages:  string(messages),
 		Data:      data,
@@ -206,6 +232,9 @@ func humanTaskFromRow(row sqlcgen.HumanTask) (*models.HumanTask, error) {
 		FlowID:    row.FlowID,
 		NodeID:    row.NodeID,
 		ContextID: row.ContextID,
+		Mode:      models.HumanTaskMode(row.Mode),
+		Channel:   models.HumanTaskChannel(row.Channel),
+		Prompt:    row.Prompt,
 		Questions: []models.HumanTaskQuestion{},
 		Messages:  []models.HumanTaskMessage{},
 		CreatedAt: row.CreatedAt,
@@ -230,6 +259,11 @@ func humanTaskFromRow(row sqlcgen.HumanTask) (*models.HumanTask, error) {
 	if row.Nexts != "" && row.Nexts != "[]" && row.Nexts != "null" {
 		if err := json.Unmarshal([]byte(row.Nexts), &rec.Nexts); err != nil {
 			return nil, fmt.Errorf("sqlite: unmarshal human task nexts for %s: %w", row.ID, err)
+		}
+	}
+	if row.Refs != "" && row.Refs != "[]" && row.Refs != "null" {
+		if err := json.Unmarshal([]byte(row.Refs), &rec.Refs); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal human task refs for %s: %w", row.ID, err)
 		}
 	}
 	return rec, nil

@@ -24,6 +24,45 @@ type HumanTaskQuestion struct {
 	AnsweredAt int64  `json:"answeredAt"`
 }
 
+// HumanTaskMode is what the hitl svc handler answered the runtime with when the
+// flow reached the node — decided at design time and carried in the node's
+// compile-time `op` payload.
+//
+//   - park:     the handler replied with a `stop` command, so the runtime dropped
+//     the node's next and the run finished here. The task's Nexts are
+//     what a resume run rebuilds its start from once the session closes.
+//   - continue: the handler only recorded the task and replied plainly (no
+//     command), so the flow carried straight on through the node's next.
+type HumanTaskMode string
+
+const (
+	HumanTaskPark     HumanTaskMode = "park"
+	HumanTaskContinue HumanTaskMode = "continue"
+)
+
+// HumanTaskChannel is where the conversation with the person is held. Only
+// `direct` (the in-app chat) is served today; the messenger channels are
+// recorded so a flow can already declare its intent, but need a provider
+// integration before a session is delivered on them.
+type HumanTaskChannel string
+
+const (
+	HumanTaskDirect   HumanTaskChannel = "direct"
+	HumanTaskTelegram HumanTaskChannel = "telegram"
+	HumanTaskWhatsapp HumanTaskChannel = "whatsapp"
+)
+
+// HumanTaskRef is one named pointer into the run's context that the node
+// declared. An extrinsic svc handler runs outside the flow's expression scope
+// and cannot resolve paths at run time, so the path is recorded as written and
+// resolved on read (see the hitl controller) against the Data snapshot the node
+// captured. `Value` is that resolution — computed per read, never persisted.
+type HumanTaskRef struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	Value any    `json:"value,omitempty"`
+}
+
 // HumanTaskMessage is one turn of the free-form chat thread the human uses to
 // understand the task's context. The LLM assistant reply is produced on the
 // frontend; the backend only stores/returns the thread.
@@ -53,9 +92,22 @@ type HumanTask struct {
 	FlowID    string              `json:"flowId"`
 	NodeID    string              `json:"nodeId"`
 	ContextID string              `json:"contextId"`
-	Questions []HumanTaskQuestion `json:"questions"`
-	Messages  []HumanTaskMessage  `json:"messages"`
-	Data      map[string]any      `json:"data,omitempty"`
+	// Mode / Channel / Prompt / Refs are the node's design-time session config,
+	// shipped whole in the extrinsic's `op` payload because the handler cannot
+	// evaluate anything against the flow at run time.
+	Mode    HumanTaskMode    `json:"mode,omitempty"`
+	Channel HumanTaskChannel `json:"channel,omitempty"`
+	// Prompt is the conversation opener as authored, `{{$.path}}` variables
+	// intact — it is a template, not text ready to show a person.
+	Prompt string `json:"prompt,omitempty"`
+	// PromptResolved is Prompt with those variables filled in from Data. It is
+	// produced when the task is read and is deliberately NOT persisted: the
+	// template plus the snapshot are the durable facts, the rendering is not.
+	PromptResolved string              `json:"promptResolved,omitempty"`
+	Refs           []HumanTaskRef      `json:"refs,omitempty"`
+	Questions      []HumanTaskQuestion `json:"questions"`
+	Messages       []HumanTaskMessage  `json:"messages"`
+	Data           map[string]any      `json:"data,omitempty"`
 	// Nexts is the parked node's outbound edge list, captured from the svc
 	// request's Node.Next when the flow reached this HITL node. It is kept so a
 	// future run can resume the flow from exactly these next nodes (the HITL

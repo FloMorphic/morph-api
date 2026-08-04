@@ -49,8 +49,12 @@ CREATE TABLE IF NOT EXISTS prompts (
 );
 
 -- Human-in-the-Loop tasks. Created by the inflow svc handler when a workflow
--- reaches a `humanInLoop` node (never via the REST API). `questions` and
--- `messages` are JSON arrays; `data` is the raw node-data snapshot.
+-- reaches a `humanInLoop` node (never via the REST API). `questions`, `messages`
+-- and `refs` are JSON arrays; `data` is the scoped-data snapshot the node
+-- captured. `mode` (park/continue) and `channel` (direct/telegram/whatsapp) are
+-- the node's design-time session config, and `prompt` is the conversation
+-- opener as authored — an unresolved template, since the svc handler cannot
+-- evaluate `{{$.path}}` variables at run time; they are resolved on read.
 CREATE TABLE IF NOT EXISTS human_tasks (
     id         TEXT    PRIMARY KEY,
     title      TEXT    NOT NULL DEFAULT '',
@@ -59,6 +63,10 @@ CREATE TABLE IF NOT EXISTS human_tasks (
     flow_id    TEXT    NOT NULL DEFAULT '',
     node_id    TEXT    NOT NULL DEFAULT '',
     context_id TEXT    NOT NULL DEFAULT '',
+    mode       TEXT    NOT NULL DEFAULT 'park',
+    channel    TEXT    NOT NULL DEFAULT 'direct',
+    prompt     TEXT    NOT NULL DEFAULT '',
+    refs       TEXT    NOT NULL DEFAULT '[]',
     questions  TEXT    NOT NULL DEFAULT '[]',
     messages   TEXT    NOT NULL DEFAULT '[]',
     data       TEXT    NOT NULL DEFAULT '{}',
