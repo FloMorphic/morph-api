@@ -121,6 +121,13 @@ func (ctl *controller) close(c fiber.Ctx) error {
 	if alreadyClosed {
 		return etc.OK(c, rec)
 	}
+	// Bind the conversation's outcome into the run's context under the node's key
+	// before anything resumes, so a downstream/resumed node reads the person's
+	// answers as `{{$.<key>}}`. A context that cannot be merged is reported but
+	// does not block the close or the resume.
+	if err := inflow.WriteHumanTaskContext(c.Context(), ctl.store, rec); err != nil {
+		return etc.Send(c, fiber.StatusBadGateway, rec, err.Error())
+	}
 	if _, err := inflow.ResumeHumanTask(c.Context(), ctl.store, rec); err != nil {
 		// The session is closed either way — report the failed resume, but hand
 		// back the task so the UI reflects the state that was actually reached.

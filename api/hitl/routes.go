@@ -27,7 +27,9 @@ func Register(api fiber.Router, store repository.Store) {
 	g.Get("", ctl.list)                    // list (?status=&search=&page=&per_page=)
 	g.Get("/id/:id", ctl.getByID)          // open
 	g.Post("/id/:id/answer", ctl.answer)   // action: answer a question
-	g.Post("/id/:id/message", ctl.message) // action: append a chat message
+	g.Post("/id/:id/message", ctl.message) // action: append a chat message (no bot)
+	g.Post("/id/:id/start", ctl.start)     // action: open the session — bot's first turn
+	g.Post("/id/:id/chat", ctl.chat)       // action: send a turn, get the bot's reply
 	g.Post("/id/:id/close", ctl.close)     // action: close (and resume a parked flow)
 	g.Delete("/id/:id", ctl.deleteByID)    // delete
 }

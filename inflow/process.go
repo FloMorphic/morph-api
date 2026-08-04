@@ -20,6 +20,17 @@ import (
 // independently of the engine's pid.
 const MetaIndexKey = "indexId"
 
+// MetaFlowKey / MetaContextKey carry the run's flow and context ids in the
+// request meta. The runtime ships every meta entry as a header on the services a
+// run calls, but — unlike the pid — it does not put flowId/contextId on those
+// headers on its own. A svc handler that has to reach back to the run (the hitl
+// handler recording a task it will later resume; continue-at) reads them from
+// the header, so we place them in the meta here to guarantee they arrive.
+const (
+	MetaFlowKey    = "flowId"
+	MetaContextKey = "contextId"
+)
+
 // MetaStartNodesKey is the RecordMeta key holding the run's full start-node set.
 // The process row's StartNodeID column carries only the first one (it is a
 // single column, and one node is all an ordinary run has), so a run started on
@@ -116,6 +127,14 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 		reqMeta[k] = v
 	}
 	reqMeta[MetaIndexKey] = strconv.FormatInt(rec.IndexID, 10)
+	// So svc handlers can reach back to this run (see the Meta*Key doc). Not
+	// overridden if a caller already supplied them.
+	if _, ok := reqMeta[MetaFlowKey]; !ok {
+		reqMeta[MetaFlowKey] = params.FlowID
+	}
+	if _, ok := reqMeta[MetaContextKey]; !ok {
+		reqMeta[MetaContextKey] = params.ContextID
+	}
 
 	p, err := fuse.NewProcess(startNodeIDs,
 		fuse.WithFlowId(params.FlowID),

@@ -40,7 +40,7 @@ func (q *Queries) DeleteHumanTask(ctx context.Context, id string) (int64, error)
 }
 
 const getHumanTask = `-- name: GetHumanTask :one
-SELECT id, title, status, pid, flow_id, node_id, context_id, mode, channel, prompt, questions, messages, data, nexts, created_at, updated_at, closed_at FROM human_tasks WHERE id = ?1
+SELECT id, title, status, pid, flow_id, node_id, context_id, mode, channel, prompt, settings_id, node_key, questions, messages, data, nexts, created_at, updated_at, closed_at FROM human_tasks WHERE id = ?1
 `
 
 func (q *Queries) GetHumanTask(ctx context.Context, id string) (HumanTask, error) {
@@ -57,6 +57,8 @@ func (q *Queries) GetHumanTask(ctx context.Context, id string) (HumanTask, error
 		&i.Mode,
 		&i.Channel,
 		&i.Prompt,
+		&i.SettingsID,
+		&i.NodeKey,
 		&i.Questions,
 		&i.Messages,
 		&i.Data,
@@ -69,7 +71,7 @@ func (q *Queries) GetHumanTask(ctx context.Context, id string) (HumanTask, error
 }
 
 const listHumanTasks = `-- name: ListHumanTasks :many
-SELECT id, title, status, pid, flow_id, node_id, context_id, mode, channel, prompt, questions, messages, data, nexts, created_at, updated_at, closed_at FROM human_tasks
+SELECT id, title, status, pid, flow_id, node_id, context_id, mode, channel, prompt, settings_id, node_key, questions, messages, data, nexts, created_at, updated_at, closed_at FROM human_tasks
 WHERE (?1 = '' OR title LIKE '%' || ?1 || '%')
   AND (?2 = '' OR status = ?2)
 ORDER BY updated_at DESC, id DESC
@@ -108,6 +110,8 @@ func (q *Queries) ListHumanTasks(ctx context.Context, arg ListHumanTasksParams) 
 			&i.Mode,
 			&i.Channel,
 			&i.Prompt,
+			&i.SettingsID,
+			&i.NodeKey,
 			&i.Questions,
 			&i.Messages,
 			&i.Data,
@@ -132,12 +136,12 @@ func (q *Queries) ListHumanTasks(ctx context.Context, arg ListHumanTasksParams) 
 const upsertHumanTask = `-- name: UpsertHumanTask :exec
 INSERT INTO human_tasks (
     id, title, status, pid, flow_id, node_id, context_id,
-    mode, channel, prompt,
+    mode, channel, prompt, settings_id, node_key,
     questions, messages, data, nexts, created_at, updated_at, closed_at
 ) VALUES (
     ?1, ?2, ?3, ?4, ?5, ?6, ?7,
-    ?8, ?9, ?10,
-    ?11, ?12, ?13, ?14, ?15, ?16, ?17
+    ?8, ?9, ?10, ?11, ?12,
+    ?13, ?14, ?15, ?16, ?17, ?18, ?19
 )
 ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
@@ -149,6 +153,8 @@ ON CONFLICT(id) DO UPDATE SET
     mode = excluded.mode,
     channel = excluded.channel,
     prompt = excluded.prompt,
+    settings_id = excluded.settings_id,
+    node_key = excluded.node_key,
     questions = excluded.questions,
     messages = excluded.messages,
     data = excluded.data,
@@ -158,23 +164,25 @@ ON CONFLICT(id) DO UPDATE SET
 `
 
 type UpsertHumanTaskParams struct {
-	ID        string
-	Title     string
-	Status    string
-	Pid       string
-	FlowID    string
-	NodeID    string
-	ContextID string
-	Mode      string
-	Channel   string
-	Prompt    string
-	Questions string
-	Messages  string
-	Data      string
-	Nexts     string
-	CreatedAt int64
-	UpdatedAt int64
-	ClosedAt  int64
+	ID         string
+	Title      string
+	Status     string
+	Pid        string
+	FlowID     string
+	NodeID     string
+	ContextID  string
+	Mode       string
+	Channel    string
+	Prompt     string
+	SettingsID string
+	NodeKey    string
+	Questions  string
+	Messages   string
+	Data       string
+	Nexts      string
+	CreatedAt  int64
+	UpdatedAt  int64
+	ClosedAt   int64
 }
 
 func (q *Queries) UpsertHumanTask(ctx context.Context, arg UpsertHumanTaskParams) error {
@@ -189,6 +197,8 @@ func (q *Queries) UpsertHumanTask(ctx context.Context, arg UpsertHumanTaskParams
 		arg.Mode,
 		arg.Channel,
 		arg.Prompt,
+		arg.SettingsID,
+		arg.NodeKey,
 		arg.Questions,
 		arg.Messages,
 		arg.Data,

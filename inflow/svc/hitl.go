@@ -34,6 +34,12 @@ type hitlPayload struct {
 	// Channel is where the conversation is held: direct / telegram / whatsapp.
 	Channel string `json:"channel"`
 	Prompt  string `json:"prompt"`
+	// SettingsID is the node-settings profile holding the chat bot's LLM provider
+	// config; the chat service reads it by id at run time. Key is the node's
+	// result binding — closing the session writes the outcome into context under
+	// it. Both are set by buildHitlNode from the node's design-time data.
+	SettingsID string `json:"settingsId"`
+	Key        string `json:"key"`
 }
 
 // HandleHumanTask persists (upserts) the task for a HITL node execution and
@@ -112,6 +118,11 @@ func HandleHumanTask(store repository.Store, header nats.Header, data []byte) ([
 		Channel:   channel,
 		// Already resolved by the runtime (see hitlPayload).
 		Prompt: req.Prompt,
+		// The chat bot's provider profile and the node's result key, carried from
+		// the node's design-time config so the session can run the model and, on
+		// close, bind its outcome into the context.
+		SettingsID: req.SettingsID,
+		Key:        req.Key,
 		// No questions yet, by design: the node cannot know what to ask. They are
 		// raised during the session and appended through the answer/message API.
 		// The main scoped data at the moment the flow parked, kept for traceability.

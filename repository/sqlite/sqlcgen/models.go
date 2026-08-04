@@ -37,23 +37,25 @@ type Extension struct {
 }
 
 type HumanTask struct {
-	ID        string
-	Title     string
-	Status    string
-	Pid       string
-	FlowID    string
-	NodeID    string
-	ContextID string
-	Mode      string
-	Channel   string
-	Prompt    string
-	Questions string
-	Messages  string
-	Data      string
-	Nexts     string
-	CreatedAt int64
-	UpdatedAt int64
-	ClosedAt  int64
+	ID         string
+	Title      string
+	Status     string
+	Pid        string
+	FlowID     string
+	NodeID     string
+	ContextID  string
+	Mode       string
+	Channel    string
+	Prompt     string
+	SettingsID string
+	NodeKey    string
+	Questions  string
+	Messages   string
+	Data       string
+	Nexts      string
+	CreatedAt  int64
+	UpdatedAt  int64
+	ClosedAt   int64
 }
 
 type MemoryStore struct {

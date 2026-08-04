@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS human_tasks (
     mode       TEXT    NOT NULL DEFAULT 'park',
     channel    TEXT    NOT NULL DEFAULT 'direct',
     prompt     TEXT    NOT NULL DEFAULT '',
+    settings_id TEXT   NOT NULL DEFAULT '',
+    node_key   TEXT    NOT NULL DEFAULT '',
     questions  TEXT    NOT NULL DEFAULT '[]',
     messages   TEXT    NOT NULL DEFAULT '[]',
     data       TEXT    NOT NULL DEFAULT '{}',

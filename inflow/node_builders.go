@@ -292,6 +292,17 @@ func buildHitlNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData m
 	}
 	payload["mode"] = hitlMode(getStr(nodeData, "mode"))
 	payload["channel"] = hitlChannel(getStr(nodeData, "channel"))
+	// settingsId points at the provider profile the chat service reads at run
+	// time (the token stays in the settings store, never in the flow graph); key
+	// is the node's result binding, so closing the session can write the
+	// conversation outcome into the context under `$.<key>` before the flow
+	// resumes. Both ride in the payload like nodeId — read back by the handler.
+	if sid := getStr(nodeData, "settingsId"); sid != "" {
+		payload["settingsId"] = sid
+	}
+	if node.Key != "" {
+		payload["key"] = node.Key
+	}
 	evNode.ExtrinsicRule.OperationData = payload
 	node.Extrinsic = &evNode.ExtrinsicRule
 	return nil

@@ -98,6 +98,17 @@ type HumanTask struct {
 	// subject matter itself — the message stack an upstream node built, the
 	// question it ended on.
 	Prompt string `json:"prompt,omitempty"`
+	// SettingsID points at the node-settings profile that holds the conversation
+	// bot's LLM provider config (provider / model / token / base URL). The chat
+	// service loads it from the settings store at run time, so the token stays in
+	// the store and never rides along in the flow graph or on the task. Carried in
+	// the node's compile-time `op` payload; empty when the node bound no profile.
+	SettingsID string `json:"settingsId,omitempty"`
+	// Key is the HITL node's result binding. Closing the session writes the
+	// conversation outcome into the run's context under `$.<Key>`, so a resumed or
+	// downstream node reads the person's answers the same way it reads any node's
+	// output. Carried in the `op` payload; empty when the node has no key.
+	Key string `json:"key,omitempty"`
 	// Questions are raised during the session, not by the node — see
 	// HumanTaskQuestion. Empty on a freshly recorded task.
 	Questions []HumanTaskQuestion `json:"questions"`

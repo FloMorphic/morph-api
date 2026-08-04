@@ -62,6 +62,26 @@ func Notify(level, title, message string) {
 		fmt.Printf("wslog: marshal notification: %v\n", err)
 		return
 	}
+	broadcast("notification", data)
+}
+
+// Emit broadcasts an arbitrary named event with a JSON payload to every
+// connected client. It is the general form of Notify (which is `notification`
+// with a toast shape): services push their own live updates on their own event
+// name — the HITL chat service emits `hitl.message` with the updated task after
+// each conversation turn, so an open conversation panel refreshes without
+// polling. Safe from any goroutine; a marshal failure is logged and dropped.
+func Emit(event string, payload any) {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		fmt.Printf("wslog: marshal %s event: %v\n", event, err)
+		return
+	}
+	broadcast(event, data)
+}
+
+// broadcast enqueues a pre-marshalled event onto every live connection.
+func broadcast(event string, data []byte) {
 	conns.RLock()
 	targets := make([]*socketio.Websocket, 0, len(conns.m))
 	for _, kws := range conns.m {
@@ -71,6 +91,6 @@ func Notify(level, title, message string) {
 	for _, kws := range targets {
 		// EmitEvent enqueues onto the per-connection send queue; a dead socket
 		// fires EventError and is dropped by the disconnect handler.
-		kws.EmitEvent("notification", data)
+		kws.EmitEvent(event, data)
 	}
 }
