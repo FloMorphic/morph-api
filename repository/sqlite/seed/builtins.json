@@ -118,5 +118,15 @@
     "icon": { "class": "flomorphic", "name": "node-cast", "meta": {} },
     "params": { "schema": {}, "ui": {} },
     "bindTo": { "topic_key": "", "values": {} }
+  },
+    {
+    "kind": "builtin",
+    "type": "http",
+    "name": "HTTP",
+    "pluginId": "aaaa-bbbb-cccc-http",
+    "description": "Make HTTP requests to external APIs. Compiles to a Plugin node.",
+    "icon": { "class": "flomorphic", "name": "node-http", "meta": {} },
+    "params": { "schema": {}, "ui": {} },
+    "bindTo": { "topic_key": "", "values": {} }
   }
 ]

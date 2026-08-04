@@ -50,6 +50,7 @@ const (
 	NODE_OPA        = "opa"        // -> code (variant opa)
 	NODE_UNTIL      = "until"      // -> extrinsic (svc.continue.at)
 	NODE_CAST       = "cast"       // -> plugin
+	NODE_HTTP       = "http"       // -> plugin (HTTP request client)
 
 	// NODE_PLUGIN is a node contributed by an imported inflowv1 plugin: one
 	// action of that plugin, dropped from the palette after a sync. Unlike the
@@ -163,6 +164,8 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 		err = buildMcpNode(&node, vfn, nodeData)
 	case NODE_CAST:
 		err = buildCastNode(&node, vfn, nodeData)
+	case NODE_HTTP:
+		err = buildHTTPNode(&node, vfn, nodeData)
 	case NODE_PLUGIN:
 		err = buildPluginActionNode(&node, vfn, nodeData)
 	case NODE_HITL:

@@ -186,6 +186,33 @@ func buildCastNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData m
 	return nil
 }
 
+// buildHTTPNode lowers an HTTP node to a Plugin whose body is the http plugin's
+// RunBody contract — {settings, method, url, headers, query, body, body_type} —
+// with `settings` projected from data.settings (the settings-profile values the
+// frontend resolved onto the node: base URL, auth, default headers) and the
+// per-request fields shipped straight through from the drawer's `body`, same
+// pattern as the LLM node. The plugin owns its own body contract.
+func buildHTTPNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData map[string]any) error {
+	node.Type = inflowModels.PluginNodeType
+	pluginNode, err := newPluginNode(vfn, nodeData)
+	if err != nil {
+		return err
+	}
+	request := getStr(nodeData, "request")
+	if request == "" {
+		request = "run"
+	}
+	pluginNode.Request = request
+	pluginNode.Body = map[string]any{
+		"settings": httpSettingsBody(getMap(nodeData, "settings")),
+	}
+	for k, v := range getMap(nodeData, "body") {
+		pluginNode.Body[k] = v
+	}
+	node.Plugin = &pluginNode.PluginRule
+	return nil
+}
+
 // buildPluginActionNode lowers a node contributed by an imported plugin to a
 // Plugin node calling one of that plugin's actions.
 //
@@ -359,6 +386,28 @@ func llmSettingsBody(profile map[string]any) map[string]any {
 	}
 }
 
+// httpSettingsBody projects the settings the frontend resolved onto the node
+// (data.settings — the selected settings-profile's values) onto the exact
+// HTTPSettings contract the http plugin reads as `body.settings`. Extra keys are
+// dropped so the compiled body carries only the contract fields; the `headers`
+// list ships through as-is (each row is a {key,value} object).
+func httpSettingsBody(profile map[string]any) map[string]any {
+	out := map[string]any{
+		"base_url":             getStr(profile, "base_url"),
+		"auth_type":            getStr(profile, "auth_type"),
+		"username":             getStr(profile, "username"),
+		"password":             getStr(profile, "password"),
+		"token":                getStr(profile, "token"),
+		"header_name":          getStr(profile, "header_name"),
+		"timeout_seconds":      int(getFloat(profile, "timeout_seconds")),
+		"insecure_skip_verify": getBool(profile, "insecure_skip_verify"),
+	}
+	if h, ok := profile["headers"]; ok {
+		out["headers"] = h
+	}
+	return out
+}
+
 // boundFunctions lowers the drawer's function rows to the BoundFunction wire
 // shape ({name, description[, parameters]}), dropping the frontend-only fields
 // (id, title). withParams keeps a row's JSON schema (`parameters`, or
@@ -441,6 +490,18 @@ func getFloat(data map[string]any, key string) float64 {
 		}
 	}
 	return 0
+}
+
+// getBool reads a boolean field defensively (false when absent/other type). A
+// string "true" is honoured as a fallback for form-serialised values.
+func getBool(data map[string]any, key string) bool {
+	switch v := data[key].(type) {
+	case bool:
+		return v
+	case string:
+		return v == "true"
+	}
+	return false
 }
 
 // getMap reads a sub-map field defensively (empty map when absent/other type).
