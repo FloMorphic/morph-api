@@ -5,21 +5,23 @@ SELECT * FROM human_tasks WHERE id = @id;
 SELECT * FROM human_tasks
 WHERE (@search = '' OR title LIKE '%' || @search || '%')
   AND (@status = '' OR status = @status)
+  AND (@flow_id = '' OR flow_id = @flow_id)
 ORDER BY updated_at DESC, id DESC
 LIMIT @limit OFFSET @offset;
 
 -- name: CountHumanTasks :one
 SELECT COUNT(*) FROM human_tasks
 WHERE (@search = '' OR title LIKE '%' || @search || '%')
-  AND (@status = '' OR status = @status);
+  AND (@status = '' OR status = @status)
+  AND (@flow_id = '' OR flow_id = @flow_id);
 
 -- name: UpsertHumanTask :exec
 INSERT INTO human_tasks (
-    id, title, status, pid, flow_id, node_id, context_id,
+    id, title, status, pid, instance_id, flow_id, node_id, context_id,
     mode, channel, prompt, settings_id, node_key,
     questions, messages, data, nexts, created_at, updated_at, closed_at
 ) VALUES (
-    @id, @title, @status, @pid, @flow_id, @node_id, @context_id,
+    @id, @title, @status, @pid, @instance_id, @flow_id, @node_id, @context_id,
     @mode, @channel, @prompt, @settings_id, @node_key,
     @questions, @messages, @data, @nexts, @created_at, @updated_at, @closed_at
 )
@@ -27,6 +29,7 @@ ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
     status = excluded.status,
     pid = excluded.pid,
+    instance_id = excluded.instance_id,
     flow_id = excluded.flow_id,
     node_id = excluded.node_id,
     context_id = excluded.context_id,

@@ -66,6 +66,11 @@ func HandleHumanTask(store repository.Store, header nats.Header, data []byte) ([
 	pid := firstNonEmpty(header.Get("pid"), req.PID)
 	flowID := firstNonEmpty(header.Get("flowId"), req.FlowID)
 	contextID := firstNonEmpty(header.Get("contextId"), req.ContextID)
+	// The logical-instance correlation id of the run that reached this node — set
+	// by StartWorkflow in the request meta. Closing this task resumes the flow
+	// under the same instance (see inflow.ResumeHumanTask). Falls back to the pid,
+	// which is what a fresh instance's id is anyway.
+	instanceID := firstNonEmpty(header.Get("instanceId"), pid)
 	// nodeId comes from the node model first, then the payload, then the concrete
 	// subject the message arrived on.
 	nodeID := req.NodeID
@@ -123,6 +128,7 @@ func HandleHumanTask(store repository.Store, header nats.Header, data []byte) ([
 		// close, bind its outcome into the context.
 		SettingsID: req.SettingsID,
 		Key:        req.Key,
+		InstanceID: instanceID,
 		// No questions yet, by design: the node cannot know what to ask. They are
 		// raised during the session and appended through the answer/message API.
 		// The main scoped data at the moment the flow parked, kept for traceability.

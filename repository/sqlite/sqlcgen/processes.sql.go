@@ -16,13 +16,15 @@ WHERE (?1 = '' OR pid LIKE '%' || ?1 || '%' OR flow_id LIKE '%' || ?1 || '%')
   AND (?2 = '' OR status = ?2)
   AND (?3 = '' OR pid = ?3)
   AND (?4 = '' OR flow_id = ?4)
+  AND (?5 = '' OR instance_id = ?5)
 `
 
 type CountProcessesParams struct {
-	Search interface{}
-	Status interface{}
-	Pid    interface{}
-	FlowID interface{}
+	Search     interface{}
+	Status     interface{}
+	Pid        interface{}
+	FlowID     interface{}
+	InstanceID interface{}
 }
 
 func (q *Queries) CountProcesses(ctx context.Context, arg CountProcessesParams) (int64, error) {
@@ -31,6 +33,7 @@ func (q *Queries) CountProcesses(ctx context.Context, arg CountProcessesParams) 
 		arg.Status,
 		arg.Pid,
 		arg.FlowID,
+		arg.InstanceID,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -50,7 +53,7 @@ func (q *Queries) DeleteProcess(ctx context.Context, indexID int64) (int64, erro
 }
 
 const getNextScheduledProcess = `-- name: GetNextScheduledProcess :one
-SELECT index_id, pid, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
+SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
 WHERE status = 'scheduled'
 ORDER BY scheduled_at ASC, index_id ASC
 LIMIT 1
@@ -62,6 +65,7 @@ func (q *Queries) GetNextScheduledProcess(ctx context.Context) (Process, error) 
 	err := row.Scan(
 		&i.IndexID,
 		&i.Pid,
+		&i.InstanceID,
 		&i.FlowID,
 		&i.ContextID,
 		&i.StartNodeID,
@@ -81,7 +85,7 @@ func (q *Queries) GetNextScheduledProcess(ctx context.Context) (Process, error) 
 }
 
 const getProcess = `-- name: GetProcess :one
-SELECT index_id, pid, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes WHERE index_id = ?1
+SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes WHERE index_id = ?1
 `
 
 func (q *Queries) GetProcess(ctx context.Context, indexID int64) (Process, error) {
@@ -90,6 +94,7 @@ func (q *Queries) GetProcess(ctx context.Context, indexID int64) (Process, error
 	err := row.Scan(
 		&i.IndexID,
 		&i.Pid,
+		&i.InstanceID,
 		&i.FlowID,
 		&i.ContextID,
 		&i.StartNodeID,
@@ -109,7 +114,7 @@ func (q *Queries) GetProcess(ctx context.Context, indexID int64) (Process, error
 }
 
 const getRunningProcessByPID = `-- name: GetRunningProcessByPID :one
-SELECT index_id, pid, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
+SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
 WHERE pid = ?1 AND status = 'running'
 ORDER BY index_id DESC
 LIMIT 1
@@ -121,6 +126,7 @@ func (q *Queries) GetRunningProcessByPID(ctx context.Context, pid string) (Proce
 	err := row.Scan(
 		&i.IndexID,
 		&i.Pid,
+		&i.InstanceID,
 		&i.FlowID,
 		&i.ContextID,
 		&i.StartNodeID,
@@ -141,18 +147,19 @@ func (q *Queries) GetRunningProcessByPID(ctx context.Context, pid string) (Proce
 
 const insertProcess = `-- name: InsertProcess :execresult
 INSERT INTO processes (
-    pid, flow_id, context_id, start_node_id, status, resource_url,
+    pid, instance_id, flow_id, context_id, start_node_id, status, resource_url,
     request, meta, error, scheduled_at, started_at, finished_at, duration_ms,
     created_at, updated_at
 ) VALUES (
-    ?1, ?2, ?3, ?4, ?5, ?6,
-    ?7, ?8, ?9, ?10, ?11, ?12, ?13,
-    ?14, ?15
+    ?1, ?2, ?3, ?4, ?5, ?6, ?7,
+    ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+    ?15, ?16
 )
 `
 
 type InsertProcessParams struct {
 	Pid         string
+	InstanceID  string
 	FlowID      string
 	ContextID   string
 	StartNodeID string
@@ -172,6 +179,7 @@ type InsertProcessParams struct {
 func (q *Queries) InsertProcess(ctx context.Context, arg InsertProcessParams) (sql.Result, error) {
 	return q.db.ExecContext(ctx, insertProcess,
 		arg.Pid,
+		arg.InstanceID,
 		arg.FlowID,
 		arg.ContextID,
 		arg.StartNodeID,
@@ -190,7 +198,7 @@ func (q *Queries) InsertProcess(ctx context.Context, arg InsertProcessParams) (s
 }
 
 const listDueScheduledProcesses = `-- name: ListDueScheduledProcesses :many
-SELECT index_id, pid, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
+SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
 WHERE status = 'scheduled' AND scheduled_at <= ?1
 ORDER BY scheduled_at ASC, index_id ASC
 `
@@ -207,6 +215,7 @@ func (q *Queries) ListDueScheduledProcesses(ctx context.Context, now int64) ([]P
 		if err := rows.Scan(
 			&i.IndexID,
 			&i.Pid,
+			&i.InstanceID,
 			&i.FlowID,
 			&i.ContextID,
 			&i.StartNodeID,
@@ -236,22 +245,24 @@ func (q *Queries) ListDueScheduledProcesses(ctx context.Context, now int64) ([]P
 }
 
 const listProcesses = `-- name: ListProcesses :many
-SELECT index_id, pid, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
+SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
 WHERE (?1 = '' OR pid LIKE '%' || ?1 || '%' OR flow_id LIKE '%' || ?1 || '%')
   AND (?2 = '' OR status = ?2)
   AND (?3 = '' OR pid = ?3)
   AND (?4 = '' OR flow_id = ?4)
+  AND (?5 = '' OR instance_id = ?5)
 ORDER BY updated_at DESC, index_id DESC
-LIMIT ?6 OFFSET ?5
+LIMIT ?7 OFFSET ?6
 `
 
 type ListProcessesParams struct {
-	Search interface{}
-	Status interface{}
-	Pid    interface{}
-	FlowID interface{}
-	Offset int64
-	Limit  int64
+	Search     interface{}
+	Status     interface{}
+	Pid        interface{}
+	FlowID     interface{}
+	InstanceID interface{}
+	Offset     int64
+	Limit      int64
 }
 
 func (q *Queries) ListProcesses(ctx context.Context, arg ListProcessesParams) ([]Process, error) {
@@ -260,6 +271,7 @@ func (q *Queries) ListProcesses(ctx context.Context, arg ListProcessesParams) ([
 		arg.Status,
 		arg.Pid,
 		arg.FlowID,
+		arg.InstanceID,
 		arg.Offset,
 		arg.Limit,
 	)
@@ -273,6 +285,7 @@ func (q *Queries) ListProcesses(ctx context.Context, arg ListProcessesParams) ([
 		if err := rows.Scan(
 			&i.IndexID,
 			&i.Pid,
+			&i.InstanceID,
 			&i.FlowID,
 			&i.ContextID,
 			&i.StartNodeID,
@@ -304,24 +317,26 @@ func (q *Queries) ListProcesses(ctx context.Context, arg ListProcessesParams) ([
 const updateProcess = `-- name: UpdateProcess :execrows
 UPDATE processes SET
     pid = ?1,
-    flow_id = ?2,
-    context_id = ?3,
-    start_node_id = ?4,
-    status = ?5,
-    resource_url = ?6,
-    request = ?7,
-    meta = ?8,
-    error = ?9,
-    scheduled_at = ?10,
-    started_at = ?11,
-    finished_at = ?12,
-    duration_ms = ?13,
-    updated_at = ?14
-WHERE index_id = ?15
+    instance_id = ?2,
+    flow_id = ?3,
+    context_id = ?4,
+    start_node_id = ?5,
+    status = ?6,
+    resource_url = ?7,
+    request = ?8,
+    meta = ?9,
+    error = ?10,
+    scheduled_at = ?11,
+    started_at = ?12,
+    finished_at = ?13,
+    duration_ms = ?14,
+    updated_at = ?15
+WHERE index_id = ?16
 `
 
 type UpdateProcessParams struct {
 	Pid         string
+	InstanceID  string
 	FlowID      string
 	ContextID   string
 	StartNodeID string
@@ -341,6 +356,7 @@ type UpdateProcessParams struct {
 func (q *Queries) UpdateProcess(ctx context.Context, arg UpdateProcessParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, updateProcess,
 		arg.Pid,
+		arg.InstanceID,
 		arg.FlowID,
 		arg.ContextID,
 		arg.StartNodeID,

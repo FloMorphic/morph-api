@@ -13,15 +13,17 @@ const countHumanTasks = `-- name: CountHumanTasks :one
 SELECT COUNT(*) FROM human_tasks
 WHERE (?1 = '' OR title LIKE '%' || ?1 || '%')
   AND (?2 = '' OR status = ?2)
+  AND (?3 = '' OR flow_id = ?3)
 `
 
 type CountHumanTasksParams struct {
 	Search interface{}
 	Status interface{}
+	FlowID interface{}
 }
 
 func (q *Queries) CountHumanTasks(ctx context.Context, arg CountHumanTasksParams) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countHumanTasks, arg.Search, arg.Status)
+	row := q.db.QueryRowContext(ctx, countHumanTasks, arg.Search, arg.Status, arg.FlowID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -40,7 +42,7 @@ func (q *Queries) DeleteHumanTask(ctx context.Context, id string) (int64, error)
 }
 
 const getHumanTask = `-- name: GetHumanTask :one
-SELECT id, title, status, pid, flow_id, node_id, context_id, mode, channel, prompt, settings_id, node_key, questions, messages, data, nexts, created_at, updated_at, closed_at FROM human_tasks WHERE id = ?1
+SELECT id, title, status, pid, flow_id, node_id, context_id, mode, channel, prompt, settings_id, node_key, instance_id, questions, messages, data, nexts, created_at, updated_at, closed_at FROM human_tasks WHERE id = ?1
 `
 
 func (q *Queries) GetHumanTask(ctx context.Context, id string) (HumanTask, error) {
@@ -59,6 +61,7 @@ func (q *Queries) GetHumanTask(ctx context.Context, id string) (HumanTask, error
 		&i.Prompt,
 		&i.SettingsID,
 		&i.NodeKey,
+		&i.InstanceID,
 		&i.Questions,
 		&i.Messages,
 		&i.Data,
@@ -71,16 +74,18 @@ func (q *Queries) GetHumanTask(ctx context.Context, id string) (HumanTask, error
 }
 
 const listHumanTasks = `-- name: ListHumanTasks :many
-SELECT id, title, status, pid, flow_id, node_id, context_id, mode, channel, prompt, settings_id, node_key, questions, messages, data, nexts, created_at, updated_at, closed_at FROM human_tasks
+SELECT id, title, status, pid, flow_id, node_id, context_id, mode, channel, prompt, settings_id, node_key, instance_id, questions, messages, data, nexts, created_at, updated_at, closed_at FROM human_tasks
 WHERE (?1 = '' OR title LIKE '%' || ?1 || '%')
   AND (?2 = '' OR status = ?2)
+  AND (?3 = '' OR flow_id = ?3)
 ORDER BY updated_at DESC, id DESC
-LIMIT ?4 OFFSET ?3
+LIMIT ?5 OFFSET ?4
 `
 
 type ListHumanTasksParams struct {
 	Search interface{}
 	Status interface{}
+	FlowID interface{}
 	Offset int64
 	Limit  int64
 }
@@ -89,6 +94,7 @@ func (q *Queries) ListHumanTasks(ctx context.Context, arg ListHumanTasksParams) 
 	rows, err := q.db.QueryContext(ctx, listHumanTasks,
 		arg.Search,
 		arg.Status,
+		arg.FlowID,
 		arg.Offset,
 		arg.Limit,
 	)
@@ -112,6 +118,7 @@ func (q *Queries) ListHumanTasks(ctx context.Context, arg ListHumanTasksParams) 
 			&i.Prompt,
 			&i.SettingsID,
 			&i.NodeKey,
+			&i.InstanceID,
 			&i.Questions,
 			&i.Messages,
 			&i.Data,
@@ -135,18 +142,19 @@ func (q *Queries) ListHumanTasks(ctx context.Context, arg ListHumanTasksParams) 
 
 const upsertHumanTask = `-- name: UpsertHumanTask :exec
 INSERT INTO human_tasks (
-    id, title, status, pid, flow_id, node_id, context_id,
+    id, title, status, pid, instance_id, flow_id, node_id, context_id,
     mode, channel, prompt, settings_id, node_key,
     questions, messages, data, nexts, created_at, updated_at, closed_at
 ) VALUES (
-    ?1, ?2, ?3, ?4, ?5, ?6, ?7,
-    ?8, ?9, ?10, ?11, ?12,
-    ?13, ?14, ?15, ?16, ?17, ?18, ?19
+    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+    ?9, ?10, ?11, ?12, ?13,
+    ?14, ?15, ?16, ?17, ?18, ?19, ?20
 )
 ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
     status = excluded.status,
     pid = excluded.pid,
+    instance_id = excluded.instance_id,
     flow_id = excluded.flow_id,
     node_id = excluded.node_id,
     context_id = excluded.context_id,
@@ -168,6 +176,7 @@ type UpsertHumanTaskParams struct {
 	Title      string
 	Status     string
 	Pid        string
+	InstanceID string
 	FlowID     string
 	NodeID     string
 	ContextID  string
@@ -191,6 +200,7 @@ func (q *Queries) UpsertHumanTask(ctx context.Context, arg UpsertHumanTaskParams
 		arg.Title,
 		arg.Status,
 		arg.Pid,
+		arg.InstanceID,
 		arg.FlowID,
 		arg.NodeID,
 		arg.ContextID,

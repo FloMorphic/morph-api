@@ -49,6 +49,7 @@ type HumanTask struct {
 	Prompt     string
 	SettingsID string
 	NodeKey    string
+	InstanceID string
 	Questions  string
 	Messages   string
 	Data       string
@@ -82,6 +83,7 @@ type NodeSetting struct {
 type Process struct {
 	IndexID     int64
 	Pid         string
+	InstanceID  string
 	FlowID      string
 	ContextID   string
 	StartNodeID string

@@ -110,8 +110,17 @@ func (c Config) Validate() error {
 }
 
 // Chat sends the conversation to the configured provider and returns the
-// assistant's reply text.
+// assistant's reply text in one shot.
 func Chat(ctx context.Context, cfg Config, msgs []Message) (string, error) {
+	return ChatStream(ctx, cfg, msgs, nil)
+}
+
+// ChatStream is Chat with incremental delivery: when onChunk is non-nil it is
+// called with each token/segment as the provider emits it (langchaingo's
+// streaming callback), so a caller can push the reply to a UI as it forms. It
+// still returns the full, trimmed reply once generation completes, so the caller
+// can persist it. A nil onChunk runs an ordinary non-streaming request.
+func ChatStream(ctx context.Context, cfg Config, msgs []Message, onChunk func(string)) (string, error) {
 	if err := cfg.Validate(); err != nil {
 		return "", err
 	}
@@ -125,7 +134,17 @@ func Chat(ctx context.Context, cfg Config, msgs []Message) (string, error) {
 		content = append(content, llms.TextParts(chatRole(m.Role), m.Text))
 	}
 
-	resp, err := model.GenerateContent(ctx, content, callOptions(cfg)...)
+	opts := callOptions(cfg)
+	if onChunk != nil {
+		opts = append(opts, llms.WithStreamingFunc(func(_ context.Context, chunk []byte) error {
+			if len(chunk) > 0 {
+				onChunk(string(chunk))
+			}
+			return nil
+		}))
+	}
+
+	resp, err := model.GenerateContent(ctx, content, opts...)
 	if err != nil {
 		return "", fmt.Errorf("llm request failed: %w", err)
 	}

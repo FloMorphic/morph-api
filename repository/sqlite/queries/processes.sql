@@ -13,6 +13,7 @@ WHERE (@search = '' OR pid LIKE '%' || @search || '%' OR flow_id LIKE '%' || @se
   AND (@status = '' OR status = @status)
   AND (@pid = '' OR pid = @pid)
   AND (@flow_id = '' OR flow_id = @flow_id)
+  AND (@instance_id = '' OR instance_id = @instance_id)
 ORDER BY updated_at DESC, index_id DESC
 LIMIT @limit OFFSET @offset;
 
@@ -21,7 +22,8 @@ SELECT COUNT(*) FROM processes
 WHERE (@search = '' OR pid LIKE '%' || @search || '%' OR flow_id LIKE '%' || @search || '%')
   AND (@status = '' OR status = @status)
   AND (@pid = '' OR pid = @pid)
-  AND (@flow_id = '' OR flow_id = @flow_id);
+  AND (@flow_id = '' OR flow_id = @flow_id)
+  AND (@instance_id = '' OR instance_id = @instance_id);
 
 -- name: GetNextScheduledProcess :one
 SELECT * FROM processes
@@ -36,11 +38,11 @@ ORDER BY scheduled_at ASC, index_id ASC;
 
 -- name: InsertProcess :execresult
 INSERT INTO processes (
-    pid, flow_id, context_id, start_node_id, status, resource_url,
+    pid, instance_id, flow_id, context_id, start_node_id, status, resource_url,
     request, meta, error, scheduled_at, started_at, finished_at, duration_ms,
     created_at, updated_at
 ) VALUES (
-    @pid, @flow_id, @context_id, @start_node_id, @status, @resource_url,
+    @pid, @instance_id, @flow_id, @context_id, @start_node_id, @status, @resource_url,
     @request, @meta, @error, @scheduled_at, @started_at, @finished_at, @duration_ms,
     @created_at, @updated_at
 );
@@ -48,6 +50,7 @@ INSERT INTO processes (
 -- name: UpdateProcess :execrows
 UPDATE processes SET
     pid = @pid,
+    instance_id = @instance_id,
     flow_id = @flow_id,
     context_id = @context_id,
     start_node_id = @start_node_id,

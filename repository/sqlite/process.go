@@ -37,6 +37,7 @@ func (r *processRepo) Create(ctx context.Context, p *models.Process) error {
 
 	res, err := r.q.InsertProcess(ctx, sqlcgen.InsertProcessParams{
 		Pid:         p.PID,
+		InstanceID:  p.InstanceID,
 		FlowID:      p.FlowID,
 		ContextID:   p.ContextID,
 		StartNodeID: p.StartNodeID,
@@ -80,6 +81,7 @@ func (r *processRepo) Update(ctx context.Context, p *models.Process) error {
 	n, err := r.q.UpdateProcess(ctx, sqlcgen.UpdateProcessParams{
 		IndexID:     p.IndexID,
 		Pid:         p.PID,
+		InstanceID:  p.InstanceID,
 		FlowID:      p.FlowID,
 		ContextID:   p.ContextID,
 		StartNodeID: p.StartNodeID,
@@ -155,21 +157,23 @@ func (r *processRepo) ListDueScheduled(ctx context.Context, now int64) ([]models
 func (r *processRepo) List(ctx context.Context, p repository.ListParams) ([]models.Process, int64, error) {
 	limit := clampLimit(p.Limit)
 	total, err := r.q.CountProcesses(ctx, sqlcgen.CountProcessesParams{
-		Search: p.Search,
-		Status: p.Status,
-		Pid:    p.PID,
-		FlowID: p.FlowID,
+		Search:     p.Search,
+		Status:     p.Status,
+		Pid:        p.PID,
+		FlowID:     p.FlowID,
+		InstanceID: p.InstanceID,
 	})
 	if err != nil {
 		return nil, 0, err
 	}
 	rows, err := r.q.ListProcesses(ctx, sqlcgen.ListProcessesParams{
-		Search: p.Search,
-		Status: p.Status,
-		Pid:    p.PID,
-		FlowID: p.FlowID,
-		Offset: int64(p.Offset),
-		Limit:  int64(limit),
+		Search:     p.Search,
+		Status:     p.Status,
+		Pid:        p.PID,
+		FlowID:     p.FlowID,
+		InstanceID: p.InstanceID,
+		Offset:     int64(p.Offset),
+		Limit:      int64(limit),
 	})
 	if err != nil {
 		return nil, 0, err
@@ -200,6 +204,7 @@ func processFromRow(row sqlcgen.Process) (*models.Process, error) {
 	rec := &models.Process{
 		IndexID:     row.IndexID,
 		PID:         row.Pid,
+		InstanceID:  row.InstanceID,
 		FlowID:      row.FlowID,
 		ContextID:   row.ContextID,
 		StartNodeID: row.StartNodeID,

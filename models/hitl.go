@@ -109,6 +109,11 @@ type HumanTask struct {
 	// downstream node reads the person's answers the same way it reads any node's
 	// output. Carried in the `op` payload; empty when the node has no key.
 	Key string `json:"key,omitempty"`
+	// InstanceID is the correlation id of the logical workflow instance this task
+	// belongs to (the parked run's InstanceID). Closing the task starts the resume
+	// run under the same InstanceID, so the whole park→resume chain — and this
+	// pause in it — is reportable as one instance. See models.Process.InstanceID.
+	InstanceID string `json:"instanceId,omitempty"`
 	// Questions are raised during the session, not by the node — see
 	// HumanTaskQuestion. Empty on a freshly recorded task.
 	Questions []HumanTaskQuestion `json:"questions"`

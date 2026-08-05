@@ -56,7 +56,7 @@ func (ctl *controller) chat(c fiber.Ctx) error {
 		return etc.FailFromRepo(c, err, "human task not found")
 	}
 
-	reply, err := llm.Chat(c.Context(), cfg, buildMessages(task, ""))
+	reply, err := streamReply(c.Context(), cfg, task.ID, buildMessages(task, ""))
 	if err != nil {
 		// The human turn is saved; report the model failure but hand back the task
 		// so the UI shows the message it already accepted.
@@ -67,7 +67,7 @@ func (ctl *controller) chat(c fiber.Ctx) error {
 	if err != nil {
 		return etc.FailFromRepo(c, err, "human task not found")
 	}
-	wslog.Emit("hitl.message", task)
+	finishStream(task)
 	return etc.OK(c, task)
 }
 
@@ -95,7 +95,7 @@ func (ctl *controller) start(c fiber.Ctx) error {
 	// No stored turns yet: kick the model with a transient user nudge (not saved)
 	// so every provider — including ones that require the thread to open on a user
 	// turn — produces the assistant's opening message.
-	reply, err := llm.Chat(c.Context(), cfg, buildMessages(task, "Begin the conversation with me."))
+	reply, err := streamReply(c.Context(), cfg, task.ID, buildMessages(task, "Begin the conversation with me."))
 	if err != nil {
 		return etc.Send(c, fiber.StatusBadGateway, task, err.Error())
 	}
@@ -103,8 +103,42 @@ func (ctl *controller) start(c fiber.Ctx) error {
 	if err != nil {
 		return etc.FailFromRepo(c, err, "human task not found")
 	}
-	wslog.Emit("hitl.message", task)
+	finishStream(task)
 	return etc.OK(c, task)
+}
+
+// ---- Streaming --------------------------------------------------------------
+
+// hitlStreamEvent is the socket event the bot's reply streams on — distinct from
+// `hitl.message` (the final, persisted turn) so a client can render tokens as
+// they arrive and reconcile against the stored message when the turn completes.
+const hitlStreamEvent = "hitl.stream"
+
+// streamChunk is one `hitl.stream` payload: an incremental token `delta` for a
+// task, or a terminal `done` marker. `seq` orders the deltas within a turn.
+type streamChunk struct {
+	TaskID string `json:"taskId"`
+	Seq    int    `json:"seq,omitempty"`
+	Delta  string `json:"delta,omitempty"`
+	Done   bool   `json:"done,omitempty"`
+}
+
+// streamReply runs the model with token streaming, pushing each delta on the
+// `hitl.stream` socket event, and returns the full reply once complete. The user
+// turn already arrived over HTTP; only the assistant's reply streams.
+func streamReply(ctx context.Context, cfg llm.Config, taskID string, msgs []llm.Message) (string, error) {
+	seq := 0
+	return llm.ChatStream(ctx, cfg, msgs, func(delta string) {
+		seq++
+		wslog.Emit(hitlStreamEvent, streamChunk{TaskID: taskID, Seq: seq, Delta: delta})
+	})
+}
+
+// finishStream closes out a streamed turn: a terminal `done` marker so clients
+// drop the live buffer, then the full persisted task on `hitl.message`.
+func finishStream(task *models.HumanTask) {
+	wslog.Emit(hitlStreamEvent, streamChunk{TaskID: task.ID, Done: true})
+	wslog.Emit("hitl.message", task)
 }
 
 // chatConfig resolves the provider config for a task's conversation from its

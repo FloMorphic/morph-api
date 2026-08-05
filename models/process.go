@@ -42,8 +42,14 @@ const (
 // StartNodeID is the first of those, not necessarily the only one — see
 // inflow.MetaStartNodesKey for where the complete set is kept.
 type Process struct {
-	IndexID     int64          `json:"indexId"`
-	PID         string         `json:"pid"`
+	IndexID int64  `json:"indexId"`
+	PID     string `json:"pid"`
+	// InstanceID is the correlation id shared by every run of one logical workflow
+	// instance — a run started from scratch and every run that resumes it after a
+	// Human-in-the-Loop park carry the same InstanceID (the first run's pid),
+	// while each keeps its own unique PID. It is what ties a park→resume chain
+	// together for "latest status of this instance" reporting.
+	InstanceID  string         `json:"instanceId,omitempty"`
 	FlowID      string         `json:"flowId"`
 	ContextID   string         `json:"contextId"`
 	StartNodeID string         `json:"startNodeId"`

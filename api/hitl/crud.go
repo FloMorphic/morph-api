@@ -29,6 +29,9 @@ func (ctl *controller) list(c fiber.Ctx) error {
 		Limit:  q.PerPage,
 		Search: q.Search,
 		Status: status,
+		// Optional: scope to one flow's tasks — the editor uses it to warn when a
+		// flow has open human tasks in flight.
+		FlowID: strings.TrimSpace(c.Query("flowId")),
 	})
 	if err != nil {
 		return etc.FailFromRepo(c, err, "human tasks not found")

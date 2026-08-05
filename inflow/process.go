@@ -12,6 +12,7 @@ import (
 	fuse "github.com/Inflowenger/inflow-fusion/inflow"
 	inflowModels "github.com/Inflowenger/inflow-fusion/models"
 	"github.com/bytedance/sonic"
+	"github.com/google/uuid"
 )
 
 // MetaIndexKey is the ProcessRequest meta key the run's indexId is echoed into.
@@ -29,6 +30,17 @@ const MetaIndexKey = "indexId"
 const (
 	MetaFlowKey    = "flowId"
 	MetaContextKey = "contextId"
+	// MetaPidKey carries the run's pid. Every run gets its own pid (the engine
+	// mints one when none is given, and two runs must never share a pid — the log
+	// stream demuxes events by it). We mint it up front instead so it can travel
+	// in the meta as a header: without that a svc handler cannot learn the pid of
+	// the run calling it, which is what left HITL tasks with an empty pid.
+	MetaPidKey = "pid"
+	// MetaInstanceKey carries the run's workflow-instance correlation id (see
+	// models.Process.InstanceID). It rides in the meta as a header so a svc handler
+	// — the hitl one recording a task — knows which logical instance it is part of,
+	// and a resume can continue that same instance.
+	MetaInstanceKey = "instanceId"
 )
 
 // MetaStartNodesKey is the RecordMeta key holding the run's full start-node set.
@@ -49,6 +61,11 @@ type StartParams struct {
 	// out to — the engine accepts a set of entry points and runs them all, so a
 	// multi-branch park resumes as the branches it actually had.
 	StartNodeIDs []string
+	// InstanceID ties this run to a logical workflow instance. Empty starts a new
+	// instance (the run's own freshly minted pid becomes the InstanceID); a resume
+	// after a HITL park passes the parked task's InstanceID so the whole chain
+	// shares one correlation id while each run keeps its own pid.
+	InstanceID string
 	// ReqMeta is extra ProcessRequest meta shipped to the engine (string map).
 	// It is a backend/controller injection point (e.g. an account tag) — never
 	// populated from a frontend request body — because the meta is assembled
@@ -135,11 +152,28 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 	if _, ok := reqMeta[MetaContextKey]; !ok {
 		reqMeta[MetaContextKey] = params.ContextID
 	}
+	// Mint this run's pid ourselves so it is known before dispatch: it goes to the
+	// engine via WithPID and travels in the meta as a header, so a svc handler
+	// (the hitl one, recording a task) learns which run called it. This is a fresh
+	// pid even for a hitl resume — that run is a new run entered on the parked
+	// node's next edges, linked to its origin through the task's meta, not by
+	// sharing a pid (which the event stream could not tell apart).
+	pid := uuid.NewString()
+	reqMeta[MetaPidKey] = pid
+	// A new instance starts under its own pid; a resume passes the parked run's
+	// InstanceID so the whole park→resume chain shares one correlation id.
+	instanceID := strings.TrimSpace(params.InstanceID)
+	if instanceID == "" {
+		instanceID = pid
+	}
+	reqMeta[MetaInstanceKey] = instanceID
+	rec.InstanceID = instanceID
 
 	p, err := fuse.NewProcess(startNodeIDs,
 		fuse.WithFlowId(params.FlowID),
 		fuse.WithContextDocument(params.ContextID),
 		fuse.WithMeta(reqMeta),
+		fuse.WithPID(pid),
 	)
 	if err != nil {
 		rec.Status = models.ProcessFailed

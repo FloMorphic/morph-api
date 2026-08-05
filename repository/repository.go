@@ -27,10 +27,14 @@ type ListParams struct {
 	// PID is an optional filter used by Processes to scope a list to the rows of
 	// one engine process uuid; empty means "any".
 	PID string
-	// FlowID is an optional filter used by Processes to scope a list to the runs
-	// of one workflow (e.g. the running processes shown while editing it); empty
-	// means "any".
+	// FlowID is an optional filter used by Processes (and HumanTasks) to scope a
+	// list to the runs / tasks of one workflow (e.g. the in-flight runs and open
+	// human tasks shown while editing it); empty means "any".
 	FlowID string
+	// InstanceID is an optional filter used by Processes to scope a list to the
+	// runs of one logical workflow instance — the correlation id shared across a
+	// park→resume chain (see inflow.StartParams.InstanceID); empty means "any".
+	InstanceID string
 	// Kind is an optional filter used by Extensions to scope a list to one
 	// origin ("builtin" or "extension"); empty means "any". The admin settings
 	// panel lists builtins; the extension portal lists extensions.

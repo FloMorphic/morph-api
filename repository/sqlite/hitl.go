@@ -86,6 +86,7 @@ func (r *humanTaskRepo) Upsert(ctx context.Context, t *models.HumanTask) error {
 		Prompt:     t.Prompt,
 		SettingsID: t.SettingsID,
 		NodeKey:    t.Key,
+		InstanceID: t.InstanceID,
 		Questions:  string(questions),
 		Messages:   string(messages),
 		Data:       data,
@@ -112,6 +113,7 @@ func (r *humanTaskRepo) List(ctx context.Context, p repository.ListParams) ([]mo
 	total, err := r.q.CountHumanTasks(ctx, sqlcgen.CountHumanTasksParams{
 		Search: p.Search,
 		Status: p.Status,
+		FlowID: p.FlowID,
 	})
 	if err != nil {
 		return nil, 0, err
@@ -119,6 +121,7 @@ func (r *humanTaskRepo) List(ctx context.Context, p repository.ListParams) ([]mo
 	rows, err := r.q.ListHumanTasks(ctx, sqlcgen.ListHumanTasksParams{
 		Search: p.Search,
 		Status: p.Status,
+		FlowID: p.FlowID,
 		Offset: int64(p.Offset),
 		Limit:  int64(limit),
 	})
@@ -224,6 +227,7 @@ func humanTaskFromRow(row sqlcgen.HumanTask) (*models.HumanTask, error) {
 		Prompt:     row.Prompt,
 		SettingsID: row.SettingsID,
 		Key:        row.NodeKey,
+		InstanceID: row.InstanceID,
 		Questions:  []models.HumanTaskQuestion{},
 		Messages:   []models.HumanTaskMessage{},
 		CreatedAt:  row.CreatedAt,

@@ -47,6 +47,9 @@ func ResumeHumanTask(ctx context.Context, store repository.Store, task *models.H
 		FlowID:       task.FlowID,
 		ContextID:    task.ContextID,
 		StartNodeIDs: startNodeIDs,
+		// Continue the same logical instance: the resume run gets its own pid but
+		// shares the parked run's InstanceID, so the whole chain reports as one.
+		InstanceID: task.InstanceID,
 		RecordMeta: map[string]any{
 			"origin":       "hitl_resume",
 			"sourceFlowId": task.FlowID,

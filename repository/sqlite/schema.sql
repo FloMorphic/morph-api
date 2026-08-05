@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS human_tasks (
     prompt     TEXT    NOT NULL DEFAULT '',
     settings_id TEXT   NOT NULL DEFAULT '',
     node_key   TEXT    NOT NULL DEFAULT '',
+    instance_id TEXT   NOT NULL DEFAULT '',
     questions  TEXT    NOT NULL DEFAULT '[]',
     messages   TEXT    NOT NULL DEFAULT '[]',
     data       TEXT    NOT NULL DEFAULT '{}',
@@ -109,6 +110,7 @@ CREATE TABLE IF NOT EXISTS node_settings (
 CREATE TABLE IF NOT EXISTS processes (
     index_id      INTEGER PRIMARY KEY AUTOINCREMENT,
     pid           TEXT    NOT NULL DEFAULT '',
+    instance_id   TEXT    NOT NULL DEFAULT '',
     flow_id       TEXT    NOT NULL DEFAULT '',
     context_id    TEXT    NOT NULL DEFAULT '',
     start_node_id TEXT    NOT NULL DEFAULT '',
