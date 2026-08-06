@@ -32,6 +32,7 @@ type Extension struct {
 	Install     string
 	Action      string
 	ParentID    string
+	Outbound    string
 	CreatedAt   int64
 	UpdatedAt   int64
 }

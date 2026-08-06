@@ -22,6 +22,10 @@ func TestActionRow(t *testing.T) {
 			Jsonschema: `{"type":"object","properties":{"summary":{"type":"string"}}}`,
 			Jsonui:     `{"summary":{"ui:widget":"textarea"}}`,
 		},
+		Outbound: []models.OutboundPort{
+			{Title: "Approved", Tags: []string{"approved"}, Description: "passed review"},
+			{Title: "Rejected", Tags: []string{"rejected"}},
+		},
 	}
 
 	row := actionRow(parent, act, act.Method)
@@ -56,6 +60,14 @@ func TestActionRow(t *testing.T) {
 	if row.ID != "" {
 		t.Errorf("id = %q, want empty so the repo issues one", row.ID)
 	}
+	// Declared outbound ports are carried through verbatim for the canvas to
+	// render one port per entry.
+	if len(row.Outbound) != 2 {
+		t.Fatalf("outbound = %+v, want the action's 2 ports", row.Outbound)
+	}
+	if row.Outbound[0].Title != "Approved" || len(row.Outbound[0].Tags) != 1 || row.Outbound[0].Tags[0] != "approved" {
+		t.Errorf("outbound[0] = %+v, want the Approved port with tag approved", row.Outbound[0])
+	}
 }
 
 // An action with no title, no icon and no form is still a usable node — it just
@@ -75,6 +87,10 @@ func TestActionRowFallbacks(t *testing.T) {
 	}
 	if row.Parameters.Schema == nil || len(row.Parameters.Schema) != 0 {
 		t.Errorf("schema = %+v, want an empty object", row.Parameters.Schema)
+	}
+	// No outbound declared → none carried; the node keeps its single default port.
+	if len(row.Outbound) != 0 {
+		t.Errorf("outbound = %+v, want none for an action that declares no ports", row.Outbound)
 	}
 }
 

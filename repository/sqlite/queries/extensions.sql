@@ -18,9 +18,9 @@ WHERE (@search = '' OR name LIKE '%' || @search || '%')
 
 -- name: UpsertExtension :exec
 INSERT INTO extensions (
-    id, kind, type, name, description, plugin_id, icon, params, bind_to, install, action, parent_id, created_at, updated_at
+    id, kind, type, name, description, plugin_id, icon, params, bind_to, install, action, parent_id, outbound, created_at, updated_at
 ) VALUES (
-    @id, @kind, @type, @name, @description, @plugin_id, @icon, @params, @bind_to, @install, @action, @parent_id, @created_at, @updated_at
+    @id, @kind, @type, @name, @description, @plugin_id, @icon, @params, @bind_to, @install, @action, @parent_id, @outbound, @created_at, @updated_at
 )
 ON CONFLICT(id) DO UPDATE SET
     kind = excluded.kind,
@@ -34,6 +34,7 @@ ON CONFLICT(id) DO UPDATE SET
     install = excluded.install,
     action = excluded.action,
     parent_id = excluded.parent_id,
+    outbound = excluded.outbound,
     updated_at = excluded.updated_at;
 
 -- name: DeleteExtension :execrows

@@ -176,6 +176,10 @@ func toParams(e *models.ExtensionRecord) (sqlcgen.UpsertExtensionParams, error) 
 	if err != nil {
 		return sqlcgen.UpsertExtensionParams{}, fmt.Errorf("sqlite: marshal extension install: %w", err)
 	}
+	outbound, err := json.Marshal(e.Outbound)
+	if err != nil {
+		return sqlcgen.UpsertExtensionParams{}, fmt.Errorf("sqlite: marshal extension outbound: %w", err)
+	}
 	return sqlcgen.UpsertExtensionParams{
 		ID:          e.ID,
 		Kind:        string(e.Kind),
@@ -189,6 +193,7 @@ func toParams(e *models.ExtensionRecord) (sqlcgen.UpsertExtensionParams, error) 
 		Install:     string(install),
 		Action:      e.Action,
 		ParentID:    e.ParentID,
+		Outbound:    string(outbound),
 		CreatedAt:   e.CreatedAt,
 		UpdatedAt:   e.UpdatedAt,
 	}, nil
@@ -225,6 +230,11 @@ func extensionFromRow(row sqlcgen.Extension) (*models.ExtensionRecord, error) {
 	if row.Install != "" {
 		if err := json.Unmarshal([]byte(row.Install), &rec.Install); err != nil {
 			return nil, fmt.Errorf("sqlite: unmarshal extension install for %s: %w", row.ID, err)
+		}
+	}
+	if row.Outbound != "" {
+		if err := json.Unmarshal([]byte(row.Outbound), &rec.Outbound); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal extension outbound for %s: %w", row.ID, err)
 		}
 	}
 	return rec, nil

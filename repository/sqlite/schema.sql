@@ -135,8 +135,11 @@ CREATE TABLE IF NOT EXISTS processes (
 -- form) and `bind_to` (extrinsic topic + values) are JSON objects. `install` is
 -- the JSON "how to run it" spec for imported plugins (repo/ref/runtime + the
 -- extra env they need), which the install endpoints render into a script and an
--- env file. Managed through the REST API (full CRUD); builtins are additionally
--- seeded idempotently by name.
+-- env file. `outbound` is the optional JSON array of declared branch ports for a
+-- synced plugin action (title/tags/description); each becomes an output port on
+-- the canvas node and its tags are stamped onto the edges drawn from it. Managed
+-- through the REST API (full CRUD); builtins are additionally seeded
+-- idempotently by name.
 CREATE TABLE IF NOT EXISTS extensions (
     id          TEXT    PRIMARY KEY,
     kind        TEXT    NOT NULL DEFAULT 'extension',
@@ -150,6 +153,7 @@ CREATE TABLE IF NOT EXISTS extensions (
     install     TEXT    NOT NULL DEFAULT '{}',
     action      TEXT    NOT NULL DEFAULT '',
     parent_id   TEXT    NOT NULL DEFAULT '',
+    outbound    TEXT    NOT NULL DEFAULT '[]',
     created_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL
 );

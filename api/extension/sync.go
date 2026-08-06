@@ -115,6 +115,7 @@ func actionRow(parent *models.ExtensionRecord, act models.PluginAction, method s
 		ParentID:    parent.ID,
 		Icon:        actionIcon(parent, act),
 		Parameters:  formParameters(act.Form),
+		Outbound:    act.Outbound,
 	}
 }
 

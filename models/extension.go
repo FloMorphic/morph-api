@@ -77,9 +77,26 @@ type ExtensionRecord struct {
 	// ParentID links a derived action row back to the registration row it was
 	// synced from, so the portal can group them and a delete can take them with
 	// it. Empty on non-derived rows.
-	ParentID  string `json:"parentId"`
-	CreatedAt int64  `json:"createdAt"`
-	UpdatedAt int64  `json:"updatedAt"`
+	ParentID string `json:"parentId"`
+	// Outbound is the action's optional static branch declaration, mirrored from
+	// the plugin's `@actions` (SDK Action.Outbound). Each entry becomes an output
+	// port on the canvas node; edges drawn from it inherit the port's tags, which
+	// the plugin fires at runtime via `next_tags` (SDK job.CmdNextFilter) to route
+	// the flow. Empty/absent for the common single-output action — a plugin node
+	// with no outbound keeps the single default source handle it has always had.
+	Outbound  []OutboundPort `json:"outbound,omitempty"`
+	CreatedAt int64          `json:"createdAt"`
+	UpdatedAt int64          `json:"updatedAt"`
+}
+
+// OutboundPort is one declared branch of a plugin action (SDK OutboundPort).
+// Title labels the port, Description explains the branch, and Tags are the route
+// tags stamped onto every edge drawn from it — the tags the plugin names in
+// `next_tags` to fire this branch.
+type OutboundPort struct {
+	Title       string   `json:"title"`
+	Tags        []string `json:"tags"`
+	Description string   `json:"description,omitempty"`
 }
 
 // --- inflowv1 descriptors (read live, never stored) -------------------------
@@ -102,11 +119,12 @@ type PluginIntro struct {
 // plugin can run, with the label/icon a palette needs and the form its
 // parameters are collected through.
 type PluginAction struct {
-	Method      string      `json:"method"`
-	Title       string      `json:"title"`
-	Description string      `json:"description"`
-	Icon        PluginIcon  `json:"icon"`
-	Form        FormBuilder `json:"form"`
+	Method      string         `json:"method"`
+	Title       string         `json:"title"`
+	Description string         `json:"description"`
+	Icon        PluginIcon     `json:"icon"`
+	Form        FormBuilder    `json:"form"`
+	Outbound    []OutboundPort `json:"outbound,omitempty"`
 }
 
 // PluginIcon is the SDK's icon reference for an action.
