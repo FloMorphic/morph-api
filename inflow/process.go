@@ -78,6 +78,25 @@ type StartParams struct {
 	// ScheduledAt, when non-zero (epoch millis), records the run as `scheduled`
 	// and does NOT dispatch it — a scheduler launches it when the time is reached.
 	ScheduledAt int64
+	// Settings overrides the engine run settings (proc timeout, node-traversal
+	// limit, fallback request timeout). Zero fields keep the fusion defaults, so a
+	// caller that only wants to bump one leaves the others at 0. See RunSettings.
+	Settings RunSettings
+}
+
+// RunSettings carries the caller-tunable engine settings for one run. Each is an
+// override of the inflow-fusion default (proc_timeout 1h, proc_node_limit 500,
+// svc_req_timeout 5s); a zero value means "leave the default", so a partially
+// filled struct only moves the fields it sets.
+type RunSettings struct {
+	// ExecuteTimeoutSec caps how long the whole run may take, in seconds.
+	ExecuteTimeoutSec int64
+	// ProcessNodeLimit stops a run after this many node visits — the guard against
+	// runaway loops. Capped to uint16 by the engine's Settings type.
+	ProcessNodeLimit uint16
+	// RequestTimeoutSec is the fallback per-request timeout (seconds) used for any
+	// http/nats call that did not set its own.
+	RequestTimeoutSec int64
 }
 
 // StartWorkflow records a process row and (unless scheduled) dispatches the
@@ -169,12 +188,24 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 	reqMeta[MetaInstanceKey] = instanceID
 	rec.InstanceID = instanceID
 
-	p, err := fuse.NewProcess(startNodeIDs,
+	opts := []func(*fuse.Process){
 		fuse.WithFlowId(params.FlowID),
 		fuse.WithContextDocument(params.ContextID),
 		fuse.WithMeta(reqMeta),
 		fuse.WithPID(pid),
-	)
+	}
+	// Apply only the settings the caller set; a zero field keeps the fusion default.
+	if params.Settings.ExecuteTimeoutSec > 0 {
+		opts = append(opts, fuse.WithProcessTimeout(time.Duration(params.Settings.ExecuteTimeoutSec)*time.Second))
+	}
+	if params.Settings.RequestTimeoutSec > 0 {
+		opts = append(opts, fuse.WithRequestTimeout(time.Duration(params.Settings.RequestTimeoutSec)*time.Second))
+	}
+	if params.Settings.ProcessNodeLimit > 0 {
+		opts = append(opts, fuse.WithNodeLimit(params.Settings.ProcessNodeLimit))
+	}
+
+	p, err := fuse.NewProcess(startNodeIDs, opts...)
 	if err != nil {
 		rec.Status = models.ProcessFailed
 		rec.Error = err.Error()

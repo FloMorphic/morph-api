@@ -26,6 +26,19 @@ type startInput struct {
 	StartNodeID string         `json:"startNodeId"`
 	Meta        map[string]any `json:"meta"`
 	ScheduledAt int64          `json:"scheduledAt"`
+	// Settings overrides the engine run settings (see runSettingsInput). Omitted
+	// or zero fields keep the engine defaults, so the frontend can send only what
+	// the user changed.
+	Settings *runSettingsInput `json:"settings"`
+}
+
+// runSettingsInput mirrors the frontend run settings: process execute timeout and
+// fallback request timeout (both seconds), and the node-traversal limit. Optional
+// and per-field — a 0 (or absent) field leaves that engine default in place.
+type runSettingsInput struct {
+	ExecuteTimeoutSec int64  `json:"executeTimeoutSec"`
+	ProcessNodeLimit  uint16 `json:"processNodeLimit"`
+	RequestTimeoutSec int64  `json:"requestTimeoutSec"`
 }
 
 // start handles POST /process — record a process row and dispatch the run to the
@@ -41,12 +54,21 @@ func (ctl *controller) start(c fiber.Ctx) error {
 	if strings.TrimSpace(in.ContextID) == "" {
 		return etc.Fail(c, fiber.StatusBadRequest, "contextId is required")
 	}
+	var settings inflow.RunSettings
+	if in.Settings != nil {
+		settings = inflow.RunSettings{
+			ExecuteTimeoutSec: in.Settings.ExecuteTimeoutSec,
+			ProcessNodeLimit:  in.Settings.ProcessNodeLimit,
+			RequestTimeoutSec: in.Settings.RequestTimeoutSec,
+		}
+	}
 	rec, err := inflow.StartWorkflow(c.Context(), ctl.store, inflow.StartParams{
 		FlowID:       in.FlowID,
 		ContextID:    in.ContextID,
 		StartNodeIDs: []string{in.StartNodeID},
 		RecordMeta:   in.Meta,
 		ScheduledAt:  in.ScheduledAt,
+		Settings:     settings,
 		// ReqMeta is intentionally not taken from the request body — the backend
 		// assembles the engine meta (indexId + any controller-supplied extras).
 	})
