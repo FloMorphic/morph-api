@@ -8,32 +8,11 @@ import (
 	inflowModels "github.com/Inflowenger/inflow-fusion/models"
 )
 
-/*
-in front side we have a pallett and node types that in compile time those will map to inflow generics types
-const items: PaletteItem[] = [
-
-	// Extensions tab
-		Feed through Call Api - Get Extrinsics
-
-	// Generics tab
-	{ type: 'startNode', title: 'Start', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z M12 16c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z', tab: 'generics' },
-	{ type: 'pluginNative', title: 'PluginNative', icon: 'M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 1 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z', tab: 'generics' },
-	{ type: 'code', title: 'Code', icon: 'M16 18l6-6-6-6 M8 6l-6 6 6 6', tab: 'generics' },
-	{ type: 'contract', title: 'Contract', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z M14 2l6 6 M14 2v6h6', tab: 'generics' },
-	{ type: 'extrinsics', title: 'Extrinsics', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z', tab: 'generics' },
-	{ type: 'goto', title: 'Goto', icon: 'M7 17L17 7 M7 7h10v10', tab: 'generics' },
-	{ type: 'void', title: 'Void', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z M12 16c-2.21 0-4-1.79-4-4s1.79-4 4-4 4 1.79 4 4-1.79 4-4 4z', tab: 'generics' },
-
-]
-*/
 const (
 	// Legacy / generic inflow node kinds still handled by the compiler.
 	// just void , contract, goto , nativley comes from inflow , others compiled to inflow native
-	// NODE_PLUGIN   = "pluginNative"
 	NODE_VOID     = "void"
 	NODE_CONTRACT = "contract"
-	// NODE_CODE     = "code"
-	// NODE_EXT_SVC  = "extrinsic"
 	NODE_GOTO = "goto"
 
 	// FloMorphic builtin morphic types (see models/extension.go). Each lowers to
