@@ -16,6 +16,7 @@ type Querier interface {
 	CountNodeSettings(ctx context.Context, arg CountNodeSettingsParams) (int64, error)
 	CountProcesses(ctx context.Context, arg CountProcessesParams) (int64, error)
 	CountPrompts(ctx context.Context, search interface{}) (int64, error)
+	CountTriggers(ctx context.Context, arg CountTriggersParams) (int64, error)
 	CountWorkflows(ctx context.Context, search interface{}) (int64, error)
 	CreateMemoryStore(ctx context.Context, arg CreateMemoryStoreParams) error
 	DeleteContext(ctx context.Context, id string) (int64, error)
@@ -29,6 +30,7 @@ type Querier interface {
 	DeletePluginActions(ctx context.Context, pluginID string) (int64, error)
 	DeleteProcess(ctx context.Context, indexID int64) (int64, error)
 	DeletePrompt(ctx context.Context, id string) (int64, error)
+	DeleteTrigger(ctx context.Context, id string) (int64, error)
 	DeleteWorkflow(ctx context.Context, id string) (int64, error)
 	GetBuiltinByName(ctx context.Context, name string) (Extension, error)
 	GetContext(ctx context.Context, id string) (Context, error)
@@ -40,23 +42,29 @@ type Querier interface {
 	GetProcess(ctx context.Context, indexID int64) (Process, error)
 	GetPrompt(ctx context.Context, id string) (Prompt, error)
 	GetRunningProcessByPID(ctx context.Context, pid string) (Process, error)
+	GetTrigger(ctx context.Context, id string) (Trigger, error)
+	GetTriggerBySlug(ctx context.Context, slug string) (Trigger, error)
 	GetWorkflow(ctx context.Context, id string) (Workflow, error)
 	InsertProcess(ctx context.Context, arg InsertProcessParams) (sql.Result, error)
 	ListContexts(ctx context.Context, arg ListContextsParams) ([]Context, error)
 	ListDueScheduledProcesses(ctx context.Context, now int64) ([]Process, error)
+	ListEnabledSchedules(ctx context.Context) ([]Trigger, error)
 	ListExtensions(ctx context.Context, arg ListExtensionsParams) ([]Extension, error)
 	ListHumanTasks(ctx context.Context, arg ListHumanTasksParams) ([]HumanTask, error)
 	ListMemoryStores(ctx context.Context) ([]MemoryStore, error)
 	ListNodeSettings(ctx context.Context, arg ListNodeSettingsParams) ([]NodeSetting, error)
 	ListProcesses(ctx context.Context, arg ListProcessesParams) ([]Process, error)
 	ListPrompts(ctx context.Context, arg ListPromptsParams) ([]Prompt, error)
+	ListTriggers(ctx context.Context, arg ListTriggersParams) ([]Trigger, error)
 	ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]Workflow, error)
 	UpdateProcess(ctx context.Context, arg UpdateProcessParams) (int64, error)
+	UpdateTriggerState(ctx context.Context, arg UpdateTriggerStateParams) error
 	UpsertContext(ctx context.Context, arg UpsertContextParams) error
 	UpsertExtension(ctx context.Context, arg UpsertExtensionParams) error
 	UpsertHumanTask(ctx context.Context, arg UpsertHumanTaskParams) error
 	UpsertNodeSetting(ctx context.Context, arg UpsertNodeSettingParams) error
 	UpsertPrompt(ctx context.Context, arg UpsertPromptParams) error
+	UpsertTrigger(ctx context.Context, arg UpsertTriggerParams) error
 	UpsertWorkflow(ctx context.Context, arg UpsertWorkflowParams) error
 }
 

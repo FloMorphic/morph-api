@@ -200,6 +200,25 @@ type ExtensionRepository interface {
 	DeletePluginActions(ctx context.Context, pluginID string) (int, error)
 }
 
+// TriggerRepository is CRUD for workflow triggers (Trigger) — the inbound
+// webhooks and recurring schedules that launch a flow. Beyond CRUD it exposes
+// the two runtime lookups the ingress and scheduler need, plus small state
+// writers that never touch the trigger's config (so recording a delivery or a
+// fire cannot clobber a concurrent edit's secret).
+type TriggerRepository interface {
+	CRUD[models.Trigger]
+	// GetBySlug resolves an ENABLED webhook by its public slug (ingress lookup),
+	// returning ErrNotFound when none matches or it is disabled.
+	GetBySlug(ctx context.Context, slug string) (*models.Trigger, error)
+	// ListEnabledSchedules returns every enabled schedule trigger — the set the
+	// recurring scheduler arms its timer from.
+	ListEnabledSchedules(ctx context.Context) ([]models.Trigger, error)
+	// RecordHit prepends a delivery to a webhook's bounded log (newest first).
+	RecordHit(ctx context.Context, id string, hit models.TriggerHit) error
+	// MarkFired stamps a schedule trigger's last-fire time.
+	MarkFired(ctx context.Context, id string, at int64) error
+}
+
 // Store aggregates the per-entity repositories behind one handle and owns the
 // underlying connection lifecycle.
 type Store interface {
@@ -211,6 +230,7 @@ type Store interface {
 	NodeSettings() NodeSettingRepository
 	Processes() ProcessRepository
 	Extensions() ExtensionRepository
+	Triggers() TriggerRepository
 	Close() error
 }
 

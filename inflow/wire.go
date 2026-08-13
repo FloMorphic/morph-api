@@ -21,12 +21,30 @@ type InflowWire struct {
 
 // RetrieveContext answers `inflow.req.context.get.{ctxId}` with the stored
 // context document, or `{}` when it is missing.
+//
+// Safety net for a run launched against a context id whose row does not exist
+// yet: on a miss (for a well-formed `ctx_` id) we materialize an empty context
+// under that id and answer `{}`. That both gives the run its `{}` starting
+// context and — crucially — gives the flow's later context writes (UpdateContext,
+// which bails when the row is absent) somewhere to persist. Normal launches (the
+// manual Run dialog, a trigger fire) create the row up front, so this only fires
+// for ids that were passed without a backing row.
 func (w *InflowWire) RetrieveContext(msg *nats.Msg) {
 	parts := strings.Split(msg.Subject, ".")
 	ctxId := parts[len(parts)-1]
 
 	rec, err := w.store.Contexts().GetByID(context.Background(), ctxId)
 	if err != nil {
+		if repository.HasPrefix(ctxId, repository.ContextIDPrefix) {
+			fresh := &models.ContextRecord{
+				ID:        ctxId,
+				Context:   "{}",
+				UpdatedBy: models.LastChange{By: models.ByFlow, Address: msg.Header.Get("flowId")},
+			}
+			if cerr := w.store.Contexts().Upsert(context.Background(), fresh); cerr != nil {
+				fmt.Printf("inflow: lazily create context %s: %v\n", ctxId, cerr)
+			}
+		}
 		msg.Respond([]byte(`{}`))
 		return
 	}

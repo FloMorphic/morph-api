@@ -112,6 +112,22 @@ type Prompt struct {
 	UpdatedAt   int64
 }
 
+type Trigger struct {
+	ID            string
+	Kind          string
+	FlowID        string
+	StartNodeID   string
+	Title         string
+	Enabled       int64
+	Slug          string
+	Config        string
+	CronEffective string
+	LastAt        int64
+	Hits          string
+	CreatedAt     int64
+	UpdatedAt     int64
+}
+
 type Workflow struct {
 	ID        string
 	Title     string

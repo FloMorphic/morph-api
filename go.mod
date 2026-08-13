@@ -9,11 +9,13 @@ require (
 	github.com/gofiber/contrib/v3/jwt v1.1.7
 	github.com/gofiber/contrib/v3/socketio v1.3.1
 	github.com/gofiber/fiber/v3 v3.4.0
+	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/mattn/go-sqlite3 v1.14.48
 	github.com/nats-io/nats.go v1.52.0
 	github.com/nats-io/nkeys v0.4.16
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/tmc/langchaingo v0.1.14
 )
 
@@ -30,7 +32,6 @@ require (
 	github.com/gofiber/contrib/v3/websocket v1.2.1 // indirect
 	github.com/gofiber/schema v1.8.0 // indirect
 	github.com/gofiber/utils/v2 v2.1.1 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/klauspost/compress v1.19.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
@@ -40,7 +41,6 @@ require (
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pkoukk/tiktoken-go v0.1.6 // indirect
-	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/savsgio/gotils v0.0.0-20250924091648-bce9a52d7761 // indirect
 	github.com/thegeekyasian/round-robin-go v0.0.0-20240605200313-019657eb8032 // indirect
 	github.com/tinylib/msgp v1.6.4 // indirect

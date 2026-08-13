@@ -50,6 +50,7 @@ type store struct {
 	nodeSettings *nodeSettingRepo
 	processes    *processRepo
 	extensions   *extensionRepo
+	triggers     *triggerRepo
 }
 
 // Open connects to the sqlite database at source (a file path for sqlite),
@@ -96,6 +97,7 @@ func Open(source string) (repository.Store, error) {
 		nodeSettings: &nodeSettingRepo{q: q},
 		processes:    &processRepo{q: q},
 		extensions:   &extensionRepo{q: q},
+		triggers:     &triggerRepo{q: q},
 	}
 
 	// Seed builtin palette nodes on first run (idempotent, keyed by name). A
@@ -153,6 +155,7 @@ func (s *store) HumanTasks() repository.HumanTaskRepository     { return s.human
 func (s *store) NodeSettings() repository.NodeSettingRepository { return s.nodeSettings }
 func (s *store) Processes() repository.ProcessRepository        { return s.processes }
 func (s *store) Extensions() repository.ExtensionRepository      { return s.extensions }
+func (s *store) Triggers() repository.TriggerRepository          { return s.triggers }
 func (s *store) Close() error                                   { return s.db.Close() }
 
 // applyMigrations runs additive, idempotent schema changes that cannot live in

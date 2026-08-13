@@ -11,6 +11,7 @@ import (
 	processControllers "github.com/FloMorphic/morph-api/api/process"
 	promptControllers "github.com/FloMorphic/morph-api/api/prompt"
 	settingsControllers "github.com/FloMorphic/morph-api/api/settings"
+	triggerControllers "github.com/FloMorphic/morph-api/api/trigger"
 	workflowControllers "github.com/FloMorphic/morph-api/api/workflow"
 	"github.com/FloMorphic/morph-api/api/wslog"
 	"github.com/FloMorphic/morph-api/env"
@@ -40,6 +41,11 @@ func RegisterAll(app fiber.Router, store repository.Store) {
 	// mints no token in local mode).
 	wslog.Register(app)
 
+	// Public webhook ingress (/hooks/:slug). Mounted before the auth gate: its
+	// callers are third parties authenticating with the hook's own credentials,
+	// not an app bearer token.
+	triggerControllers.RegisterIngress(app, store)
+
 	// Optional HS256 bearer auth across the CRUD groups (off by default so the
 	// web app works standalone).
 	if env.AuthEnabled() {
@@ -54,4 +60,5 @@ func RegisterAll(app fiber.Router, store repository.Store) {
 	settingsControllers.Register(app, store)
 	processControllers.Register(app, store)
 	extensionControllers.Register(app, store)
+	triggerControllers.Register(app, store)
 }

@@ -158,6 +158,27 @@ CREATE TABLE IF NOT EXISTS extensions (
     updated_at  INTEGER NOT NULL
 );
 
+-- Workflow triggers: inbound webhooks and recurring schedules that launch a
+-- flow. Kept apart from the flow graph. `config` is the kind-specific JSON
+-- (webhook: methods/auth/whitelist incl. the secret; schedule: mode/cron/
+-- interval/timezone); `cron_effective` is the single spec the scheduler arms on;
+-- `hits` is the bounded webhook delivery log.
+CREATE TABLE IF NOT EXISTS triggers (
+    id             TEXT    PRIMARY KEY,
+    kind           TEXT    NOT NULL DEFAULT '',
+    flow_id        TEXT    NOT NULL DEFAULT '',
+    start_node_id  TEXT    NOT NULL DEFAULT '',
+    title          TEXT    NOT NULL DEFAULT '',
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    slug           TEXT    NOT NULL DEFAULT '',
+    config         TEXT    NOT NULL DEFAULT '{}',
+    cron_effective TEXT    NOT NULL DEFAULT '',
+    last_at        INTEGER NOT NULL DEFAULT 0,
+    hits           TEXT    NOT NULL DEFAULT '[]',
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_workflows_updated_at ON workflows (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_contexts_updated_at ON contexts (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_updated_at ON memory_stores (updated_at DESC, id DESC);
@@ -171,3 +192,6 @@ CREATE INDEX IF NOT EXISTS idx_processes_scheduled ON processes (status, schedul
 CREATE INDEX IF NOT EXISTS idx_extensions_updated_at ON extensions (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_extensions_kind ON extensions (kind, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_extensions_builtin_name ON extensions (kind, name);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_triggers_slug ON triggers (slug) WHERE slug != '';
+CREATE INDEX IF NOT EXISTS idx_triggers_flow ON triggers (flow_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_triggers_schedule ON triggers (kind, enabled);

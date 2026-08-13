@@ -39,6 +39,12 @@ func main() {
 		// new one is recorded; its first pass catches rows that came due while
 		// the app was down. Needs the runtime, so it lives in this branch.
 		inflow.StartScheduler(context.Background(), store)
+
+		// Trigger scheduler: arms recurring schedule triggers (cron/interval) and
+		// starts a fresh run each time one comes due. Distinct from the process
+		// scheduler above (which resumes one-shot parked runs); needs the runtime
+		// to launch, so it lives in this branch too.
+		inflow.StartTriggerScheduler(context.Background(), store)
 	}
 
 	app := fiber.New(fiber.Config{
