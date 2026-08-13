@@ -25,6 +25,9 @@ func (ctl *controller) upsert(c fiber.Ctx) error {
 	if err := ctl.normalize(c.Context(), &in); err != nil {
 		return etc.Fail(c, fiber.StatusBadRequest, err.Error())
 	}
+	if err := ctl.ensureSingleTrigger(c.Context(), &in); err != nil {
+		return etc.Fail(c, fiber.StatusConflict, err.Error())
+	}
 	if err := ctl.store.Triggers().Upsert(c.Context(), &in); err != nil {
 		if isSlugConflict(err) {
 			return etc.Fail(c, fiber.StatusConflict, "webhook slug already in use")
@@ -35,7 +38,7 @@ func (ctl *controller) upsert(c fiber.Ctx) error {
 	if in.Kind == models.TriggerSchedule {
 		inflow.NotifyTriggerScheduler()
 	}
-	return etc.OK(c, ctl.present(&in))
+	return etc.OK(c, ctl.present(&in, false))
 }
 
 // list handles GET /trigger — page-based listing scoped by flow and/or kind.
@@ -59,18 +62,20 @@ func (ctl *controller) list(c fiber.Ctx) error {
 	}
 	presented := make([]models.Trigger, len(items))
 	for i := range items {
-		presented[i] = ctl.present(&items[i])
+		presented[i] = ctl.present(&items[i], false)
 	}
 	return etc.OK(c, models.NewPage(presented, total, q))
 }
 
-// getByID handles GET /trigger/id/:id.
+// getByID handles GET /trigger/id/:id. This single-record read reveals the
+// webhook secret (unlike the list) so the drawer can open its settings with the
+// stored secret loaded — masked in the UI until the user chooses to see it.
 func (ctl *controller) getByID(c fiber.Ctx) error {
 	rec, err := ctl.store.Triggers().GetByID(c.Context(), c.Params("id"))
 	if err != nil {
 		return etc.FailFromRepo(c, err, "trigger not found")
 	}
-	return etc.OK(c, ctl.present(rec))
+	return etc.OK(c, ctl.present(rec, true))
 }
 
 // deleteByID handles DELETE /trigger/id/:id.
@@ -152,6 +157,22 @@ func (ctl *controller) normalize(ctx context.Context, t *models.Trigger) error {
 	return nil
 }
 
+// ensureSingleTrigger enforces one trigger per workflow: a fire always launches
+// this flow, and wanting several entry points is better modeled as separate
+// (cloned) workflows. A save is allowed only when the flow has no other trigger.
+func (ctl *controller) ensureSingleTrigger(ctx context.Context, t *models.Trigger) error {
+	existing, _, err := ctl.store.Triggers().List(ctx, repository.ListParams{FlowID: t.FlowID, Limit: 5})
+	if err != nil {
+		return nil // don't block a save on a read error; the DB stays the authority
+	}
+	for i := range existing {
+		if existing[i].ID != t.ID {
+			return errors.New("a workflow can have only one trigger — clone the workflow to add another")
+		}
+	}
+	return nil
+}
+
 // ensureSlug assigns a webhook slug when none is given: it keeps the existing
 // slug on an update (so the public URL is stable), and mints a fresh URL-safe id
 // on a create.
@@ -174,8 +195,10 @@ func (ctl *controller) ensureSlug(ctx context.Context, t *models.Trigger) error 
 }
 
 // present prepares a trigger for the wire: it computes the read-only fields
-// (public URL for a webhook, next fire for a schedule) and redacts the secret.
-func (ctl *controller) present(t *models.Trigger) models.Trigger {
+// (public URL for a webhook, next fire for a schedule). When reveal is false the
+// secret is redacted (list, upsert echo); when true it is kept so a single-record
+// read can hand the drawer the stored secret to display.
+func (ctl *controller) present(t *models.Trigger, reveal bool) models.Trigger {
 	out := *t
 	switch out.Kind {
 	case models.TriggerWebhook:
@@ -187,7 +210,13 @@ func (ctl *controller) present(t *models.Trigger) models.Trigger {
 			}
 		}
 	}
-	out.Redact()
+	if reveal {
+		if out.Auth != nil {
+			out.HasSecret = out.Auth.Secret != ""
+		}
+	} else {
+		out.Redact()
+	}
 	return out
 }
 
