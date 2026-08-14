@@ -5,6 +5,7 @@ package api
 
 import (
 	contextControllers "github.com/FloMorphic/morph-api/api/context"
+	designerControllers "github.com/FloMorphic/morph-api/api/designer"
 	extensionControllers "github.com/FloMorphic/morph-api/api/extension"
 	hitlControllers "github.com/FloMorphic/morph-api/api/hitl"
 	memoryControllers "github.com/FloMorphic/morph-api/api/memory"
@@ -62,6 +63,7 @@ func RegisterAll(app fiber.Router, store repository.Store) {
 	processControllers.Register(app, store)
 	extensionControllers.Register(app, store)
 	triggerControllers.Register(app, store)
+	designerControllers.Register(app, store)
 
 	// Embedded MCP server (/mcp). Mounted last, inside the guarded section, so it
 	// inherits the same optional bearer gate as the CRUD groups. Off with

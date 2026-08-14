@@ -65,6 +65,86 @@ func registerMemoryTools(s *server.MCPServer, store repository.Store) {
 		return jsonResult(rec)
 	})
 
+	// --- creating stores ----------------------------------------------------
+
+	s.AddTool(mcp.NewTool("flo_create_vector_store",
+		mcp.WithDescription("Create a vector memory store from a user-given spec. The embedding provider/model/dimensions are captured once here and reused for every index and search, so they cannot change later. Creating the store provisions a sqlite-vec index of the given width."),
+		mcp.WithString("name", mcp.Required(), mcp.Description("store name")),
+		mcp.WithString("description", mcp.Description("what the store holds")),
+		mcp.WithString("provider", mcp.Required(), mcp.Description(`embedding LLM provider (e.g. "openai") or a full base URL of an OpenAI-compatible embeddings endpoint`)),
+		mcp.WithString("embeddingModel", mcp.Required(), mcp.Description("embedding model name")),
+		mcp.WithNumber("dimensions", mcp.Required(), mcp.Description("vector width the index is built for (> 0)")),
+		mcp.WithString("token", mcp.Description("provider API key (may be omitted and injected another way)")),
+		mcp.WithString("metric", mcp.Description("distance metric: cosine (default) | dot | euclidean")),
+		mcp.WithString("namespace", mcp.Description("optional namespace label")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		name, err := req.RequireString("name")
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("name is required", err), nil
+		}
+		store := models.MemoryStore{
+			Name:        name,
+			Description: req.GetString("description", ""),
+			Type:        models.MemoryVector,
+			Vector: &models.VectorMemoryConfig{
+				Provider:       req.GetString("provider", ""),
+				EmbeddingModel: req.GetString("embeddingModel", ""),
+				Token:          req.GetString("token", ""),
+				Dimensions:     req.GetInt("dimensions", 0),
+				Metric:         models.VectorMetric(strings.TrimSpace(req.GetString("metric", ""))),
+				Namespace:      req.GetString("namespace", ""),
+			},
+		}
+		if msg := validateNewStore(&store); msg != "" {
+			return mcp.NewToolResultError(msg), nil
+		}
+		if err := repo.Create(ctx, &store); err != nil {
+			return mcp.NewToolResultErrorFromErr("create failed", err), nil
+		}
+		return jsonResult(store)
+	})
+
+	s.AddTool(mcp.NewTool("flo_create_document_store",
+		mcp.WithDescription("Create a document memory store from a user-given spec: a backing table name and its column schema. The table name must be a plain identifier (it is interpolated into DDL)."),
+		mcp.WithString("name", mcp.Required(), mcp.Description("store name")),
+		mcp.WithString("description", mcp.Description("what the store holds")),
+		mcp.WithString("table", mcp.Required(), mcp.Description("backing table name — letters, digits, underscore; not starting with a digit")),
+		mcp.WithArray("columns", mcp.Required(), mcp.Description("column schema: [{name, type, primary?}]"),
+			mcp.Items(map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name":    map[string]any{"type": "string"},
+					"type":    map[string]any{"type": "string"},
+					"primary": map[string]any{"type": "boolean"},
+				},
+				"required": []string{"name", "type"},
+			}),
+		),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var in struct {
+			Name        string               `json:"name"`
+			Description string               `json:"description"`
+			Table       string               `json:"table"`
+			Columns     []models.TableColumn `json:"columns"`
+		}
+		if err := req.BindArguments(&in); err != nil {
+			return mcp.NewToolResultErrorFromErr("invalid document store payload", err), nil
+		}
+		store := models.MemoryStore{
+			Name:        in.Name,
+			Description: in.Description,
+			Type:        models.MemoryDocument,
+			Document:    &models.DocumentMemoryConfig{Table: in.Table, Columns: in.Columns},
+		}
+		if msg := validateNewStore(&store); msg != "" {
+			return mcp.NewToolResultError(msg), nil
+		}
+		if err := repo.Create(ctx, &store); err != nil {
+			return mcp.NewToolResultErrorFromErr("create failed", err), nil
+		}
+		return jsonResult(store)
+	})
+
 	// --- vector stores ------------------------------------------------------
 
 	s.AddTool(mcp.NewTool("flo_search_vectors",
@@ -278,6 +358,50 @@ func resolveDocWrite(
 		return nil, nil, bad
 	}
 	return rec, doc, nil
+}
+
+// validateNewStore mirrors validateMemory in api/memory/crud.go: it checks a
+// create spec, normalizes the config to the declared type (nils the other
+// variant), and returns a human message on the first problem or "" when valid.
+// Kept in lockstep with the REST validator so an MCP-created store is identical
+// to one made through the web app.
+func validateNewStore(m *models.MemoryStore) string {
+	if strings.TrimSpace(m.Name) == "" {
+		return "name is required"
+	}
+	switch m.Type {
+	case models.MemoryVector:
+		m.Document = nil
+		if m.Vector == nil {
+			return "vector config is required for a vector store"
+		}
+		if strings.TrimSpace(m.Vector.Provider) == "" {
+			return `vector provider is required (the embedding LLM provider, e.g. "openai", or a full base URL)`
+		}
+		if strings.TrimSpace(m.Vector.EmbeddingModel) == "" {
+			return "vector embeddingModel is required"
+		}
+		if m.Vector.Dimensions <= 0 {
+			return "vector dimensions must be greater than zero"
+		}
+	case models.MemoryDocument:
+		m.Vector = nil
+		if m.Document == nil {
+			return "document config is required for a document store"
+		}
+		if strings.TrimSpace(m.Document.Table) == "" {
+			return "document table is required"
+		}
+		if !models.IsSafeIdentifier(m.Document.Table) {
+			return "document table must be a plain identifier (letters, digits, underscore; not starting with a digit)"
+		}
+		if len(m.Document.Columns) == 0 {
+			return "document columns must have at least one column"
+		}
+	default:
+		return "type must be 'vector' or 'document'"
+	}
+	return ""
 }
 
 // clamp bounds v to [lo, hi].

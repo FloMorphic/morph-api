@@ -1,0 +1,156 @@
+[
+  {
+    "kind": "startNode",
+    "label": "Start",
+    "tagline": "Entry point",
+    "description": "The entry point of a workflow. Every flow requires exactly one. Compiles to a Void start marker in Inflowenger.",
+    "primitives": "Void"
+  },
+  {
+    "kind": "promissall",
+    "label": "Wait for All",
+    "tagline": "Await all parallel branches",
+    "description": "A synchronisation barrier — the flow equivalent of JavaScript `Promise.all` or WaitGroup in Golang .When a node fans out to several outbound branches, the Inflowenger runtime launches them all in parallel and they run simultaneously. Most of the time each branch simply flows on with the context it already has. But when a later step must not start until every one of those parallel branches has finished, place a `Wait for All` in front of it: it holds until all inbound branches complete, merges each of their results into the shared context, and only then continues with the fully-updated context. Compiles to a Void node whose `depend` is the set of all inbound nodes.",
+    "primitives": "Void"
+  },
+  {
+    "kind": "until",
+    "label": "Continue After",
+    "tagline": "Resume at a later time",
+    "description": "Park the flow and resume it at a scheduled time. Compiles to an Extrinsic against `svc.continue.at`, which records the captured outbound nodes and re-launches them at the given time. The delay/at inputs resolve to a single unix time (absolute at compile time, or `now + delay` at run time).",
+    "primitives": "Extrinsic · svc.continue.at",
+    "dataFields": { "mode": "hour", "value": 1, "at": "" }
+  },
+  {
+    "kind": "goto",
+    "label": "Goto",
+    "tagline": "Jump to another flow",
+    "description": "Transfer control to a node in another (or the same) workflow, like a subroutine jump. Compiles to a GoTo.",
+    "primitives": "GoTo",
+    "dataFields": { "goto": { "flowId": "", "from_nodeId": "", "end_nodeId": "" } },
+    "notes": [
+      "A Goto is a subroutine call: control jumps to the target node in the target flow, and when that flow reaches the Goto's end node it continues to whatever follows the Goto. Each Goto runs its own private copy of the flow it calls, so several branches may enter one Goto, two Gotos may call the same flow and even share an end node, and the called flow's own wiring is left untouched for anything else that uses it.",
+      "Two things to keep in mind: the target flow is loaded once per Goto node, so it costs a copy of that flow (do not reach for a Goto to save re-drawing one or two nodes), and nesting is bounded — a Goto that jumps back into a flow already being called re-enters the same copy rather than nesting deeper, which is what makes a loop through a Goto terminate."
+    ]
+  },
+  {
+    "kind": "llm",
+    "label": "LLM",
+    "tagline": "Call a model with tools",
+    "description": "Call a language model. Its required global config comes from a settings profile (the inflowv1 plugin settings); `body` holds the prompt template. Each bound function becomes an output port the model can route through. Compiles to a Plugin node.",
+    "primitives": "Plugin",
+    "dataFields": { "subject_prefix": "llm", "idle_min": 5, "request": "run", "body": { "messages": [] }, "functions": [] },
+    "notes": [
+      "Init messages: use the shorthand `\"system\": \"…\"` and `\"prompt\": \"…\"` on `data` instead of writing body.messages by hand.",
+      "Each bound function is `{ \"name\": \"snake_case_tool_name\", \"title\": \"Label\", \"description\": \"when the model should call this\", \"parameters\": { \"type\": \"object\", \"properties\": { … }, \"required\": [] } }`.",
+      "`name` is both the tool name and the route tag, `description` is what the model chooses on (always write one), `parameters` is the JSON Schema of the call arguments (flat properties only)."
+    ]
+  },
+  {
+    "kind": "rule",
+    "label": "Rule",
+    "tagline": "Branch on a contract",
+    "description": "Evaluate a rule (JavaScript or OPA/Rego) over the scoped context and route through matching handlers. The scoped slice arrives as `input`; in JavaScript the LAST EXPRESSION is the decision (not a `return`), in Rego it is the variable named by the result variable. Compiles to a Contract; each handler is an output port for a routed branch.",
+    "primitives": "Contract",
+    "dataFields": { "lang": "js", "logic_rule": "let scopedData = input // the slice selected by `scope`\n\nlet decision = { pass: true }\n\ndecision // last expression — this is the routed decision\n", "opa_result": "", "conditions": [], "handlers": [] },
+    "notes": [
+      "Handlers are `{ \"id\": \"h1\", \"name\": \"approved\", \"title\": \"Approved\" }`; each is a routed branch.",
+      "`name` is the branch's route tag — the decision has to fire it and the edge leaving that port carries it — while `title` only labels the port on the canvas.",
+      "`logic_rule` is JS returning a value (`lang: \"js\"`) or Rego (`lang: \"opa\"`)."
+    ]
+  },
+  {
+    "kind": "mcp",
+    "label": "MCP",
+    "tagline": "MCP client",
+    "description": "Connect to an MCP server as a client. In \"Tool only\" mode it calls a single tool; in \"With LLM\" mode it drives a model (provider config from a settings profile) that binds and calls the loaded tools internally — tool routing never surfaces as workflow edges. Connection params (URL, transport, auth) are set on the node. Compiles to a Plugin node.",
+    "primitives": "Plugin",
+    "dataFields": { "subject_prefix": "mcp", "idle_min": 5, "request": "call_tool", "mcpMode": "tool", "body": { "messages": [] }, "url": "", "transport": "streamable-http", "auth": "", "functions": [], "tool": "", "arguments": {} },
+    "notes": [
+      "An MCP node runs in one of two modes; set `mcpMode` and keep `request` in step:",
+      "- `mcpMode: \"tool\"` (`request: \"call_tool\"`) — tool-only, an integration: it calls ONE named tool on the server and returns its result, no model involved. Set `tool` to the tool name once its tools are loaded from the server in the app; `arguments` are shaped by that tool's input schema. Use this when the step is a single deterministic call.",
+      "- `mcpMode: \"llm\"` (`request: \"run\"`) — driven by a model: it binds ALL of the server's tools and lets the model call them itself over a conversation. Seed it with the `system` / `prompt` shorthand (same as an LLM node); the provider/model come from a settings profile. Tool calls stay inside the node — they never surface as workflow edges — so this node has a single output. Use this when a task needs a model to decide which of the server's tools to call.",
+      "Either way the tool list is loaded from the server in the app, not written here; leave `functions` empty."
+    ]
+  },
+  {
+    "kind": "js",
+    "label": "JS",
+    "tagline": "Run JavaScript",
+    "description": "Run a JavaScript step against the scoped context and write the result back to `key`. The scoped slice arrives as `input`, and the value of the LAST EXPRESSION in the code is the node output — not a `return` statement. Compiles to a Code node (variant `js`) in the Inflowenger ecosystem.",
+    "primitives": "Code · js",
+    "dataFields": { "lang": "js", "logic_rule": "let scopedData = input // the slice selected by `scope`\n\nlet result = { ok: true, seen: scopedData }\n\nresult // last expression — this is what lands in `key`\n" }
+  },
+  {
+    "kind": "opa",
+    "label": "OPA",
+    "tagline": "Run OPA / Rego",
+    "description": "Evaluate an OPA/Rego policy against the scoped context and write the selected result back to `key`. Inside the policy the given scope is accessible through the `input` key (e.g. `input.<field in scope>`), and the key/value pairs defined in Conditions are accessible through the `data` key (e.g. `data.<condition key>`). Try your policy in the playground: https://play.openpolicyagent.org. Compiles to a Code node (variant `opa`) in the Inflowenger ecosystem.",
+    "primitives": "Code · opa",
+    "dataFields": { "lang": "opa", "logic_rule": "scope_data := input # the scoped context — fields selected by `scope` are available as input.<field>\ncriteria := data # values coming from the Conditions key/value pairs — available as data.<key>\n\nresult := true\n", "opa_result": "result", "conditions": [] }
+  },
+  {
+    "kind": "docstore",
+    "label": "Doc Store",
+    "tagline": "Read / write documents",
+    "description": "Read (run a query) or write documents in a referenced Document memory store. A read runs `query` against the store; a write takes its payload from `input` (the node `scope` or an input JSONPath). Compiles to an Extrinsic on `svc.store.doc.{ACTION}` (inflo-fusion listens on `svc.store.doc.*`).",
+    "primitives": "Extrinsic · svc.store.doc.*",
+    "dataFields": { "storeId": "", "action": "read", "query": "", "input": "$" },
+    "notes": [
+      "Leave `storeId` \"\" (the designer picks the store in the drawer — note it) and set `action` to \"read\" or \"write\".",
+      "A read (`action: \"read\"`) runs a basic SQL `query`. You do not know the store's columns, so write a simple skeleton with placeholders for the designer to fill: `select * from <STORE_NAME> where <field> = <value>`.",
+      "A write (`action: \"write\"`) stores the payload selected by `input` (a JSONPath, default the node `scope`); no query.",
+      "Prefer shaping the write payload with a Cast before this node rather than writing whatever is in scope: put a `cast` node bound to THIS same store in front of the write, and point the write's `input` at what it produced (`$.mapped`). The Cast assembles a clean object matching the table's columns, so the row that lands is exactly the store's schema — no stray Context fields, nothing missing. See the cast kind."
+    ]
+  },
+  {
+    "kind": "vecstore",
+    "label": "Vector Store",
+    "tagline": "Read / write vectors",
+    "description": "Read (run a query) or write into a referenced Vector memory store. A read runs `query` against the store; a write takes its payload from `input` (the node `scope` or an input JSONPath). Compiles to an Extrinsic on `svc.store.vec.{ACTION}` (inflo-fusion listens on `svc.store.vec.*`).",
+    "primitives": "Extrinsic · svc.store.vec.*",
+    "dataFields": { "storeId": "", "action": "read", "query": "", "input": "$" },
+    "notes": [
+      "Leave `storeId` \"\" (the designer picks the store in the drawer — note it) and set `action` to \"read\" or \"write\".",
+      "A read (`action: \"read\"`) runs `query` — the text to match by similarity: a literal string, or `{{$.path}}` to embed text from the Context (e.g. `{{$.ticket.body}}`).",
+      "A write (`action: \"write\"`) stores the payload selected by `input` (a JSONPath, default the node `scope`); no query."
+    ]
+  },
+  {
+    "kind": "cast",
+    "label": "Cast / Mapping",
+    "tagline": "Map fields into a shape",
+    "description": "Build a value by mapping each target key (from a referenced Document store schema) to a static value or a JSONPath resolved against the run-time context. Compiles to a Plugin node.",
+    "primitives": "Plugin",
+    "dataFields": { "subject_prefix": "cast", "idle_min": 5, "request": "run", "body": {}, "storeId": "", "mappings": [] },
+    "notes": [
+      "Set `storeId` to the Document store whose row you are assembling — its schema columns are the keys to map (leave `storeId` \"\" and note it if the designer must pick the store).",
+      "Each mapping is `{ \"key\": \"column_name\", \"mode\": \"static\" | \"jsonpath\", \"value\": \"…\" }`: `static` writes the literal `value`; `jsonpath` resolves `value` as a `{{$.path}}` (or `{{$this.path}}`) template against the Context at run time. The assembled object is written under `key` (default `mapped`).",
+      "The point of a Cast is to prepare a clean, table-shaped record just before a Doc Store WRITE: Cast (bound to the store) → Doc Store write with `input: \"$.mapped\"`. It has no output ports of its own, so unlike an LLM/Rule it MAY run on a many-scope — `scope: \"$.orders[*]\"` builds one mapped record per element, which pairs with a per-element write."
+    ]
+  },
+  {
+    "kind": "http",
+    "label": "HTTP",
+    "tagline": "Call an external API",
+    "description": "Make an HTTP request to an external API and write the response back to `key`. The method, URL, headers, query params and request body are set on the node; each may embed {{$.path}} context vars, resolved at run time. Compiles to a Plugin node.",
+    "primitives": "Plugin",
+    "dataFields": { "subject_prefix": "http", "idle_min": 5, "request": "run", "body": { "method": "GET", "url": "", "headers": [], "query": [], "body": "", "body_type": "json" } },
+    "notes": [
+      "Put the request in `body`: `{ \"method\": \"GET|POST|…\", \"url\": \"https://…\", \"headers\": [{ \"key\": \"\", \"value\": \"\" }], \"query\": [{ \"key\": \"\", \"value\": \"\" }], \"body\": \"\", \"body_type\": \"json\" }`.",
+      "`headers` and `query` are key/value rows; `body` is the raw request body (a JSON string when `body_type: \"json\"`); `body_type` (json | form | text) sets the Content-Type. Any field — url, header value, body — may embed `{{$.path}}` context vars, resolved at run time."
+    ]
+  },
+  {
+    "kind": "hitl",
+    "label": "Human in the Loop",
+    "tagline": "Ask a human",
+    "description": "Hand the flow to a person when it cannot settle something itself. The prompt tells the session what to establish — read from the run’s own context — and the questions come out of the conversation, not the canvas. Either park the run until the person is done (it resumes from here) or record the task and carry on. Compiles to an Extrinsic against the backend `hitl` service (`svc.hitl.add`), which records a Human Task surfaced under Operate → Human Task.",
+    "primitives": "Extrinsic · svc.hitl.add",
+    "dataFields": { "mode": "park", "prompt": "Review what the flow has produced so far:\n\n{{$.llm.messages}}\n\nIdentify the point it could not settle on its own, explain it to the person in plain language, and ask them the questions you need answered before the flow can continue.", "channel": "direct" },
+    "notes": [
+      "`prompt` is the node: it tells the session what to establish with the person and may embed `{{$.path}}` context variables, which the runtime resolves before the task is recorded. Write it to read the run's history and work out what to ask — there is no static question list, because a flow reaches a human exactly when what to ask is not yet known.",
+      "`mode` is \"park\" (the run stops here and resumes once the session closes) or \"continue\" (record the task, carry on). `channel` is \"direct\" (only one supported today), \"telegram\" or \"whatsapp\"."
+    ]
+  }
+]

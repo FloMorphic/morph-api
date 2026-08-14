@@ -3,6 +3,7 @@ package workflowControllers
 import (
 	"strings"
 
+	"github.com/FloMorphic/morph-api/api/wslog"
 	"github.com/FloMorphic/morph-api/etc"
 	"github.com/FloMorphic/morph-api/inflow"
 	"github.com/FloMorphic/morph-api/models"
@@ -19,9 +20,16 @@ func (ctl *controller) upsert(c fiber.Ctx) error {
 	if strings.TrimSpace(input.Title) == "" {
 		input.Title = "untitled workflow"
 	}
+	// Fill headless-author graph defaults on the one shared path. A no-op for a
+	// graph the editor produced (see inflow.NormalizeGraph), so this changes
+	// nothing for the visual builder while keeping it in lockstep with MCP.
+	inflow.NormalizeGraph(&input)
 	if err := ctl.repo.Upsert(c.Context(), &input); err != nil {
 		return etc.FailFromRepo(c, err, "workflow not found")
 	}
+	// Live sync: tell any open editor the flow changed so it can refetch without
+	// a manual refresh (a no-op when no client is connected).
+	wslog.Emit("flow.changed", fiber.Map{"id": input.ID, "source": "api"})
 	return etc.OK(c, input)
 }
 
