@@ -15,6 +15,7 @@ import (
 	workflowControllers "github.com/FloMorphic/morph-api/api/workflow"
 	"github.com/FloMorphic/morph-api/api/wslog"
 	"github.com/FloMorphic/morph-api/env"
+	"github.com/FloMorphic/morph-api/mcpserver"
 	"github.com/FloMorphic/morph-api/etc"
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
@@ -61,4 +62,13 @@ func RegisterAll(app fiber.Router, store repository.Store) {
 	processControllers.Register(app, store)
 	extensionControllers.Register(app, store)
 	triggerControllers.Register(app, store)
+
+	// Embedded MCP server (/mcp). Mounted last, inside the guarded section, so it
+	// inherits the same optional bearer gate as the CRUD groups. Off with
+	// MCP_ENABLED=false. Its runtime-touching tools (start/stop a run, close a
+	// human task) only work when the inflow runtime is connected, exactly like
+	// the REST endpoints they mirror.
+	if env.MCPEnabled() {
+		mcpserver.Register(app, store)
+	}
 }

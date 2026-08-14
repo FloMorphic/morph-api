@@ -103,3 +103,12 @@ func AuthEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(getEnvVar("AUTH_ENABLED")))
 	return v == "true" || v == "1" || v == "yes"
 }
+
+// MCPEnabled toggles the embedded MCP server mounted at /mcp (see mcpserver).
+// On by default so an AI client can drive the API out of the box; set
+// MCP_ENABLED=false (or 0/no) to leave the endpoint unmounted. When AuthEnabled
+// is also on, /mcp sits behind the same bearer gate as the CRUD groups.
+func MCPEnabled() bool {
+	v := strings.ToLower(strings.TrimSpace(getEnvVar("MCP_ENABLED")))
+	return v == "" || v == "true" || v == "1" || v == "yes"
+}

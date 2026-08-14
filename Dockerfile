@@ -99,6 +99,7 @@ ARG GOPROXY
 ENV GOPROXY=${GOPROXY} \
     PORT=8025 \
     DB_SOURCE=/data/flomorphic.db \
+    MCP_ENABLED=true \
     APP_DIR=/app \
     PLUGIN_BIN_DIR=/app/plugins \
     PLUGIN_SRC_DIR=/src/plugins \
