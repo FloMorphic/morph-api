@@ -37,10 +37,14 @@ func Register(app fiber.Router, store repository.Store) {
 	s := server.NewMCPServer(
 		serverName, serverVersion,
 		server.WithToolCapabilities(true),
+		// The designer surface (tools_designer.go) exposes the workflow-designer
+		// instructions as an MCP prompt, so the prompt capability is advertised.
+		server.WithPromptCapabilities(true),
 		server.WithRecovery(),
 	)
 
 	registerWorkflowTools(s, store)
+	registerDesignerTools(s, store)
 	registerContextTools(s, store)
 	registerProcessTools(s, store)
 	registerPromptTools(s, store)

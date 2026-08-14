@@ -52,9 +52,20 @@ This is not an LLM quirk. It applies to every node whose ports are derived from 
 - Plugin-backed nodes — `llm`, `mcp`, `cast`, `http` and an imported `plugin` action are ALL the same Plugin primitive underneath, and any of them can route at run time by firing tags. The visible signal is `functions` (LLM) or `outbound` (plugin action).
 - `rule` nodes, whose `handlers` are the branches the contract chooses between.
 So: give any node whose ports are derived — a plugin node with `functions`/`outbound`, a Rule node with `handlers` — a single-valued `scope` (usually `$`).
-When you need both per-element work and a decision, that is TWO nodes, and it is the correct shape rather than a workaround:
+When per-element work feeds a SINGLE decision made AFTER the whole collection, that is TWO nodes, and it is the correct shape rather than a workaround:
 1. a per-element node on `scope: "$.orders[*]"` (LLM without functions, `js`, `http`, …) writing its result under each element via `key`,
 2. then a decision node on `scope: "$"` reading what accumulated and routing ONCE.
+
+### When each element needs its OWN decision: use a LOOP, not a many-scope
+The two-node shape above still makes ONE decision for the whole collection. When the goal is genuinely "for EACH element, decide/route it on its own" — approve or reject each order, escalate or close each ticket — a many-scope cannot express it at all (the limit above), and this is the case to reach for an explicit LOOP built from ordinary nodes. Prefer a loop here over trying to bend a many-scope + `$this`: every step of a loop is a visible edge the flow can reason about, and there is no hidden per-element cardinality to get wrong.
+A loop is just nodes wired into a cycle:
+1. INIT a counter once — a `js` node at `scope: "$"`, `let i = 0` on its own last line, with `key: "i"` (writes `$.i`).
+2. A `rule` GUARD at `scope: "$"`, "more items?": a handler named `next` for `input.i < input.items.length`, a handler named `done` otherwise.
+3. Off the guard's `next` port, LIFT the current element to a fixed address — a `js` node `let current = input.items[input.i]` (last line `current`), `key: "current"`. Templates cannot index by a variable, so `{{$.items[$.i]}}` does NOT resolve; this is why the element is copied to `$.current`. The body then follows — an `llm`, `rule`, `http`, … reading `{{$.current.…}}` / `input.current` — and may route freely, because it runs on ONE element with a single-valued scope.
+4. ADVANCE the counter — a `js` node `let i = input.i + 1` (last line `i`), `key: "i"`.
+5. Draw a BACK-EDGE from the advance node to the GUARD rule's id (not to the body). Off the guard's `done` port, continue into the rest of the flow.
+Two things a loop must get right or it never ends: the counter MUST advance every pass (step 4), and the back-edge MUST return to the guard (step 2) — the guard's `done` handler is the only exit. The engine caps total node visits as a backstop, but a loop that forgets to advance just fails at that cap instead of finishing.
+A loop has NO scope element, so read the current item off `$.current` / `input.current` — never `$this`. `$this` belongs only to a many-scope node.
 
 ## Writing code (`js` and `rule` nodes, and `opa`)
 The scoped slice arrives as `input`. There is no `ctx`, no arguments, no function wrapper.

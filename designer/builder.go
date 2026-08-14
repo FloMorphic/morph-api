@@ -49,6 +49,7 @@ func init() {
 		// runtime condition — fail loud so it is caught immediately.
 		panic("designer: invalid catalog.json: " + err.Error())
 	}
+	indexCatalog()
 }
 
 // CanvasNode is one node already on the designer's canvas — enough for the prompt

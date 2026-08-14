@@ -35,6 +35,15 @@ One node MUST be type "startNode". Node types and their extra data fields:
 - plugin:   the imported plugin action's fields (from its @form)
 - goto:     goto {flowId, nodeId}
 Edges wire nodes: {id, source, target, sourceHandle?, targetHandle?, data:{tags:[]}}. Branch routing uses data.tags.
+
+Scope vs branching (the mistake to avoid):
+- A node's "scope" is a JSONPath. A scope selecting MANY values ("$.issues[*]", a filter query) runs the node ONCE PER ELEMENT, but those passes are a QUEUE INSIDE the one node — sequential, on the same node, not parallel. Nothing on the graph forks: the node's outgoing edges are followed ONCE, after every pass finishes. Scope cardinality is NEVER branching.
+- Branching has exactly ONE source: a node with several outgoing EDGES. A "promissall" (wait-for-all) only merges REAL branches — two or more edges wired into it. Putting a promissall after a single scoped node is a no-op: only one edge arrives, so there is nothing to wait for.
+- A node whose output ports are DERIVED from its result — "llm" with bound functions, "rule" with handlers, a "plugin" action with outbound ports (all the same primitive underneath) — routes for the WHOLE node, so it MUST carry a single-valued scope (usually "$"). Never give such a node a wildcard/filter scope: the runtime stops at the first element that picks a branch and skips (and warns about) the rest.
+- To do per-element work AND then decide, use TWO nodes: a per-element node on "$.issues[*]" (llm WITHOUT functions, js, http, cast…) writing its result under each element via "key", then a decision node on "$" that reads what accumulated and routes once.
+
+Context refs in TEXT fields (a prompt, an http url/body, a cast value): "{{$.path}}" is a FIXED address in the whole Context; "{{$this}}" (and "{{$this.field}}") is wherever THIS pass is scoped. On a many-scope node these differ and it matters: with scope "$.issues[*]" the prompt must read "{{$this.title}}" / "{{$this.description}}" for the current issue — "{{$.title}}" reads a top-level $.title that is not there, and "{{$.issues[0].title}}" reads the FIRST issue on every pass (almost always a bug). Use "$this" for the scoped element, "$.path" only for a fixed Context address. (Never put "{{…}}" in code — js/opa/rule logic reads the scoped slice off "input"; templating is text-fields only.)
+
 Use flo_list_extensions for the exact param form of each node type, and flo_compile_workflow to validate a draft before saving.`
 
 // registerWorkflowTools exposes the /flow surface: read (list, get with an
