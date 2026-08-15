@@ -43,6 +43,14 @@ func HandleContinueAfter(store repository.Store, header nats.Header, data []byte
 	flowID := header.Get("flowId")
 	contextID := header.Get("contextId")
 	pid := header.Get("pid")
+	// The logical-instance correlation id of the run reaching this node (set by
+	// StartWorkflow in the request meta). The scheduled resume continues the same
+	// instance, so the whole park→resume chain shares one id — mirrors HITL. Falls
+	// back to the pid, which is what a fresh instance's id is anyway.
+	instanceID := header.Get("instanceId")
+	if strings.TrimSpace(instanceID) == "" {
+		instanceID = pid
+	}
 	nodeID := ""
 	if body.Node != nil {
 		nodeID = body.Node.ID
@@ -87,6 +95,9 @@ func HandleContinueAfter(store repository.Store, header nats.Header, data []byte
 		StartNodeIDs: startNodeIDs,
 		ScheduledAt:  scheduledAt,
 		RecordMeta:   recordMeta,
+		// Continue the same logical instance so the scheduled resume ties back to
+		// the run that parked here (each run still keeps its own pid).
+		InstanceID: instanceID,
 		// A Continue After resumes the same context after the delay: seed the
 		// parked run's traversal state so a join past this node does not lock.
 		Resume: true,
