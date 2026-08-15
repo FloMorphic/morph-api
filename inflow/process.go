@@ -50,6 +50,13 @@ const (
 // to — keeps the complete set here, which is what the scheduler relaunches from.
 const MetaStartNodesKey = "startNodeIds"
 
+// MetaResumeKey is the RecordMeta flag marking a run as a continuation of an
+// earlier one over the same context (a HITL resume or a Continue After). It is
+// persisted on the row because a scheduled row is re-dispatched by the scheduler
+// through a freshly built request, not by replaying the stored one, so the
+// resume intent has to survive on the record to reach that later launch.
+const MetaResumeKey = "resume"
+
 // StartParams describes a workflow run to launch.
 type StartParams struct {
 	// FlowID is the workflow to run (required).
@@ -78,6 +85,13 @@ type StartParams struct {
 	// ScheduledAt, when non-zero (epoch millis), records the run as `scheduled`
 	// and does NOT dispatch it — a scheduler launches it when the time is reached.
 	ScheduledAt int64
+	// Resume marks this run as a continuation of an earlier run over the same
+	// context (a HITL resume or a Continue After): the engine seeds the traversal
+	// snapshot the earlier run left in the context header, so a join downstream of
+	// the resume point sees its already-completed dependencies instead of locking.
+	// A fresh run leaves it false. Persisted on the row (MetaResumeKey) so a
+	// scheduled resume still carries the flag when the scheduler launches it.
+	Resume bool
 	// Settings overrides the engine run settings (proc timeout, node-traversal
 	// limit, fallback request timeout). Zero fields keep the fusion defaults, so a
 	// caller that only wants to bump one leaves the others at 0. See RunSettings.
@@ -136,6 +150,11 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 		recordMeta[k] = v
 	}
 	recordMeta[MetaStartNodesKey] = startNodeIDs
+	// Persist the resume intent so a scheduled row (relaunched through a freshly
+	// built request) still resumes; only when set, to keep the meta clean.
+	if params.Resume {
+		recordMeta[MetaResumeKey] = true
+	}
 
 	// Create the row first so the auto-increment index_id is assigned; it is the
 	// indexId echoed into request meta below.
@@ -193,6 +212,10 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 		fuse.WithContextDocument(params.ContextID),
 		fuse.WithMeta(reqMeta),
 		fuse.WithPID(pid),
+	}
+	// A continuation seeds the earlier run's traversal snapshot in the engine.
+	if params.Resume {
+		opts = append(opts, fuse.WithResume())
 	}
 	// Apply only the settings the caller set; a zero field keeps the fusion default.
 	if params.Settings.ExecuteTimeoutSec > 0 {
@@ -271,6 +294,18 @@ func nextNodeIDs(nexts []inflowModels.Next) []string {
 // startNodesFor recovers a recorded run's full start-node set: the meta list
 // when one was kept, otherwise the row's single column (any row written before
 // multi-node starts existed).
+// resumeFor reports whether a scheduled row is a continuation, read from the
+// record meta the way startNodesFor reads its start set — so the scheduler,
+// which rebuilds the request rather than replaying it, still resumes.
+func resumeFor(rec *models.Process) bool {
+	if raw, ok := rec.Meta[MetaResumeKey]; ok {
+		if b, ok := raw.(bool); ok {
+			return b
+		}
+	}
+	return false
+}
+
 func startNodesFor(rec *models.Process) []string {
 	if raw, ok := rec.Meta[MetaStartNodesKey]; ok {
 		if list, ok := raw.([]any); ok {

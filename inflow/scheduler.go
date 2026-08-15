@@ -163,12 +163,17 @@ func (s *Scheduler) launch(ctx context.Context, rec *models.Process) error {
 
 	// Relaunch on every node the row was recorded to start from — a resume that
 	// picked up several parked branches must not collapse to its first one.
-	p, err := fuse.NewProcess(startNodesFor(rec),
+	opts := []func(*fuse.Process){
 		fuse.WithFlowId(rec.FlowID),
 		fuse.WithContextDocument(rec.ContextID),
 		fuse.WithMeta(reqMeta),
 		fuse.WithPID(rec.PID),
-	)
+	}
+	// A scheduled Continue After is a continuation: seed the earlier run's state.
+	if resumeFor(rec) {
+		opts = append(opts, fuse.WithResume())
+	}
+	p, err := fuse.NewProcess(startNodesFor(rec), opts...)
 	if err != nil {
 		return fmt.Errorf("build process request: %w", err)
 	}
