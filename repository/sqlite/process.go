@@ -34,6 +34,10 @@ func (r *processRepo) Create(ctx context.Context, p *models.Process) error {
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal process meta: %w", err)
 	}
+	snapshot, err := marshalObject(p.Snapshot)
+	if err != nil {
+		return fmt.Errorf("sqlite: marshal process snapshot: %w", err)
+	}
 
 	res, err := r.q.InsertProcess(ctx, sqlcgen.InsertProcessParams{
 		Pid:         p.PID,
@@ -45,6 +49,7 @@ func (r *processRepo) Create(ctx context.Context, p *models.Process) error {
 		ResourceUrl: p.ResourceURL,
 		Request:     request,
 		Meta:        meta,
+		Snapshot:    snapshot,
 		Error:       p.Error,
 		ScheduledAt: p.ScheduledAt,
 		StartedAt:   p.StartedAt,
@@ -77,6 +82,10 @@ func (r *processRepo) Update(ctx context.Context, p *models.Process) error {
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal process meta: %w", err)
 	}
+	snapshot, err := marshalObject(p.Snapshot)
+	if err != nil {
+		return fmt.Errorf("sqlite: marshal process snapshot: %w", err)
+	}
 
 	n, err := r.q.UpdateProcess(ctx, sqlcgen.UpdateProcessParams{
 		IndexID:     p.IndexID,
@@ -89,6 +98,7 @@ func (r *processRepo) Update(ctx context.Context, p *models.Process) error {
 		ResourceUrl: p.ResourceURL,
 		Request:     request,
 		Meta:        meta,
+		Snapshot:    snapshot,
 		Error:       p.Error,
 		ScheduledAt: p.ScheduledAt,
 		StartedAt:   p.StartedAt,
@@ -223,6 +233,9 @@ func processFromRow(row sqlcgen.Process) (*models.Process, error) {
 	}
 	if err := unmarshalObject(row.Meta, &rec.Meta); err != nil {
 		return nil, fmt.Errorf("sqlite: unmarshal process meta for %d: %w", row.IndexID, err)
+	}
+	if err := unmarshalObject(row.Snapshot, &rec.Snapshot); err != nil {
+		return nil, fmt.Errorf("sqlite: unmarshal process snapshot for %d: %w", row.IndexID, err)
 	}
 	return rec, nil
 }

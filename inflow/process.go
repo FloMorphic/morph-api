@@ -91,7 +91,7 @@ type StartParams struct {
 	// the resume point sees its already-completed dependencies instead of locking.
 	// A fresh run leaves it false. Persisted on the row (MetaResumeKey) so a
 	// scheduled resume still carries the flag when the scheduler launches it.
-	Resume bool
+	Resume *inflowModels.ResumeState
 	// Settings overrides the engine run settings (proc timeout, node-traversal
 	// limit, fallback request timeout). Zero fields keep the fusion defaults, so a
 	// caller that only wants to bump one leaves the others at 0. See RunSettings.
@@ -152,7 +152,7 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 	recordMeta[MetaStartNodesKey] = startNodeIDs
 	// Persist the resume intent so a scheduled row (relaunched through a freshly
 	// built request) still resumes; only when set, to keep the meta clean.
-	if params.Resume {
+	if params.Resume != nil {
 		recordMeta[MetaResumeKey] = true
 	}
 
@@ -213,9 +213,15 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 		fuse.WithMeta(reqMeta),
 		fuse.WithPID(pid),
 	}
-	// A continuation seeds the earlier run's traversal snapshot in the engine.
-	if params.Resume {
-		opts = append(opts, fuse.WithResume())
+	// A continuation seeds the earlier run's traversal snapshot in the engine. The
+	// snapshot is fetched by the caller and passed in via params.Resume — HITL
+	// resume looks it up by the parked run's pid, the scheduler by a Continue
+	// After's sourcePid (see loadResumeSnapshot). It cannot be fetched here: a
+	// scheduled Continue After records its row before the parked run has produced
+	// the snapshot. nil means a blank continue, which the engine handles by
+	// seeding nothing.
+	if params.Resume != nil {
+		opts = append(opts, fuse.WithResume(params.Resume))
 	}
 	// Apply only the settings the caller set; a zero field keeps the fusion default.
 	if params.Settings.ExecuteTimeoutSec > 0 {
@@ -266,6 +272,55 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 	}
 	fmt.Printf("process: launched %d (pid=%s flow=%s nodes=%v)\n", rec.IndexID, rec.PID, rec.FlowID, startNodeIDs)
 	return rec, nil
+}
+
+// schedHeaderKey is the context-doc header slot the engine writes the run-end
+// traversal snapshot into (fractal-core resume.go writes it there at run end).
+// UpdateContext lifts it off the set.context message onto the process row.
+const schedHeaderKey = "_sched"
+
+// processByPID returns the process row for an engine pid, across any status —
+// unlike GetRunningByPID, whose row is gone once the producing run finished,
+// which is exactly the state it is in by the time a resume looks it up. The pid
+// filter is an exact match and rows come back newest-first, and each run mints
+// its own pid, so the first row is the one that produced the snapshot.
+func processByPID(ctx context.Context, store repository.Store, pid string) (*models.Process, error) {
+	items, _, err := store.Processes().List(ctx, repository.ListParams{PID: pid, Limit: 1})
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, repository.ErrNotFound
+	}
+	return &items[0], nil
+}
+
+// loadResumeSnapshot returns the run-end traversal snapshot the engine produced
+// for the run identified by pid, so a continuation can seed it (StartParams.Resume).
+//
+// The snapshot is keyed by the *producing* run's pid — the parked run's pid for a
+// HITL resume, a Continue After's sourcePid for a scheduled resume — never the
+// continuation's own fresh pid, and never the shared contextId (which overlapping
+// runs clobber). It was persisted onto that run's row by UpdateContext. Returning
+// nil degrades to a blank continue: the engine logs a resume-skipped line and
+// seeds nothing.
+func loadResumeSnapshot(ctx context.Context, store repository.Store, pid string) *inflowModels.ResumeState {
+	if strings.TrimSpace(pid) == "" {
+		return nil
+	}
+	rec, err := processByPID(ctx, store, pid)
+	if err != nil || len(rec.Snapshot) == 0 {
+		return nil
+	}
+	b, err := sonic.Marshal(rec.Snapshot)
+	if err != nil {
+		return nil
+	}
+	var snap inflowModels.ResumeState
+	if err := sonic.Unmarshal(b, &snap); err != nil {
+		return nil
+	}
+	return &snap
 }
 
 // nonEmpty returns the blank-free subset of ids, preserving order. A caller that

@@ -100,7 +100,8 @@ func HandleContinueAfter(store repository.Store, header nats.Header, data []byte
 		InstanceID: instanceID,
 		// A Continue After resumes the same context after the delay: seed the
 		// parked run's traversal state so a join past this node does not lock.
-		Resume: true,
+		// Resume Fill in updateDocContext message
+		Resume: nil,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("continue.at: schedule resume: %w", err)

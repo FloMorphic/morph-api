@@ -49,7 +49,9 @@ func ResumeHumanTask(ctx context.Context, store repository.Store, task *models.H
 		StartNodeIDs: startNodeIDs,
 		// A HITL park is a real stop over the same context; resuming it seeds the
 		// parked run's traversal state so a join past the parked node does not lock.
-		Resume: true,
+		// The snapshot was stored on the parked run's row (by its pid) when that run
+		// pushed its run-end context; fetch it by task.PID (see loadResumeSnapshot).
+		Resume: loadResumeSnapshot(ctx, store, task.PID),
 		// Continue the same logical instance: the resume run gets its own pid but
 		// shares the parked run's InstanceID, so the whole chain reports as one.
 		InstanceID: task.InstanceID,

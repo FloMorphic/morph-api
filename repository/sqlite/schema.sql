@@ -118,6 +118,10 @@ CREATE TABLE IF NOT EXISTS processes (
     resource_url  TEXT    NOT NULL DEFAULT '',
     request       TEXT    NOT NULL DEFAULT '{}',
     meta          TEXT    NOT NULL DEFAULT '{}',
+    -- Run-end traversal snapshot (engine "_sched": flowSig/traverse/joinGen),
+    -- captured per run so a continuation (Continue After, HITL resume) can seed it,
+    -- and available to render what the run traversed.
+    snapshot      TEXT    NOT NULL DEFAULT '{}',
     error         TEXT    NOT NULL DEFAULT '',
     scheduled_at  INTEGER NOT NULL DEFAULT 0,
     started_at    INTEGER NOT NULL DEFAULT 0,

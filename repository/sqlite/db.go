@@ -154,8 +154,8 @@ func (s *store) Prompts() repository.PromptRepository           { return s.promp
 func (s *store) HumanTasks() repository.HumanTaskRepository     { return s.humanTasks }
 func (s *store) NodeSettings() repository.NodeSettingRepository { return s.nodeSettings }
 func (s *store) Processes() repository.ProcessRepository        { return s.processes }
-func (s *store) Extensions() repository.ExtensionRepository      { return s.extensions }
-func (s *store) Triggers() repository.TriggerRepository          { return s.triggers }
+func (s *store) Extensions() repository.ExtensionRepository     { return s.extensions }
+func (s *store) Triggers() repository.TriggerRepository         { return s.triggers }
 func (s *store) Close() error                                   { return s.db.Close() }
 
 // applyMigrations runs additive, idempotent schema changes that cannot live in
@@ -180,6 +180,7 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE human_tasks ADD COLUMN node_key TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE human_tasks ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE processes ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE processes ADD COLUMN snapshot TEXT NOT NULL DEFAULT '{}'`,
 	}
 	for _, stmt := range migrations {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

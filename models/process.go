@@ -57,7 +57,13 @@ type Process struct {
 	ResourceURL string         `json:"resourceUrl,omitempty"`
 	Request     map[string]any `json:"request,omitempty"`
 	Meta        map[string]any `json:"meta,omitempty"`
-	Error       string         `json:"error,omitempty"`
+	// Snapshot is the run-end traversal snapshot the engine produced for this run
+	// (its "_sched": flowSig/traverse/joinGen), stored by the UpdateContext handler.
+	// A continuation (Continue After, HITL resume) reads it back by pid to seed the
+	// engine so a join past the resume point does not lock; it also describes what
+	// the run traversed, for rendering. nil/{} for a run that produced none.
+	Snapshot map[string]any `json:"snapshot,omitempty"`
+	Error    string         `json:"error,omitempty"`
 	// ScheduledAt is the epoch-millis a scheduled run should launch at; 0 for an
 	// immediate run.
 	ScheduledAt int64 `json:"scheduledAt"`

@@ -169,9 +169,14 @@ func (s *Scheduler) launch(ctx context.Context, rec *models.Process) error {
 		fuse.WithMeta(reqMeta),
 		fuse.WithPID(rec.PID),
 	}
-	// A scheduled Continue After is a continuation: seed the earlier run's state.
-	if resumeFor(rec) {
-		opts = append(opts, fuse.WithResume())
+	// A scheduled Continue After is a continuation: seed the parked run's state.
+	// The snapshot is keyed by the run that parked here (sourcePid), not this
+	// scheduled row's own fresh pid, and it only exists now — the parked run
+	// produced it at its end, after this row was recorded. Fetch it at launch.
+	if sourcePid, _ := rec.Meta["sourcePid"].(string); sourcePid != "" {
+		if snap := loadResumeSnapshot(ctx, s.store, sourcePid); snap != nil {
+			opts = append(opts, fuse.WithResume(snap))
+		}
 	}
 	p, err := fuse.NewProcess(startNodesFor(rec), opts...)
 	if err != nil {

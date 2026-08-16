@@ -39,11 +39,11 @@ ORDER BY scheduled_at ASC, index_id ASC;
 -- name: InsertProcess :execresult
 INSERT INTO processes (
     pid, instance_id, flow_id, context_id, start_node_id, status, resource_url,
-    request, meta, error, scheduled_at, started_at, finished_at, duration_ms,
+    request, meta, snapshot, error, scheduled_at, started_at, finished_at, duration_ms,
     created_at, updated_at
 ) VALUES (
     @pid, @instance_id, @flow_id, @context_id, @start_node_id, @status, @resource_url,
-    @request, @meta, @error, @scheduled_at, @started_at, @finished_at, @duration_ms,
+    @request, @meta, @snapshot, @error, @scheduled_at, @started_at, @finished_at, @duration_ms,
     @created_at, @updated_at
 );
 
@@ -58,6 +58,7 @@ UPDATE processes SET
     resource_url = @resource_url,
     request = @request,
     meta = @meta,
+    snapshot = @snapshot,
     error = @error,
     scheduled_at = @scheduled_at,
     started_at = @started_at,

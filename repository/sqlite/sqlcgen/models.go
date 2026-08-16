@@ -92,6 +92,7 @@ type Process struct {
 	ResourceUrl string
 	Request     string
 	Meta        string
+	Snapshot    string
 	Error       string
 	ScheduledAt int64
 	StartedAt   int64
