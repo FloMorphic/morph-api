@@ -142,3 +142,45 @@ func TestPluginEnvFile(t *testing.T) {
 		}
 	}
 }
+
+// A declared INFRA_URL overrides the derived one and is not duplicated; a
+// declared PLUGIN_ID / INFRA_CRED is ignored so it can never clobber the
+// authoritative identity or minted credential.
+func TestPluginEnvFileReservedKeys(t *testing.T) {
+	got := pluginEnvFile("p1", "Y3JlZA==", []models.EnvVar{
+		{Key: "INFRA_URL", Value: "nats.example.com:4222"},
+		{Key: "PLUGIN_ID", Value: "spoofed"},
+		{Key: "INFRA_CRED", Value: "spoofed"},
+		{Key: "A", Value: "1"},
+	})
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	want := []string{
+		"PLUGIN_ID=p1",
+		"INFRA_URL=nats.example.com:4222",
+		"INFRA_CRED=Y3JlZA==",
+		"A=1",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("got %d lines %q, want %d", len(lines), lines, len(want))
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+// An empty declared INFRA_URL leaves the derived value in place rather than
+// blanking it.
+func TestPluginEnvFileEmptyInfraURL(t *testing.T) {
+	got := pluginEnvFile("p1", "Y3JlZA==", []models.EnvVar{
+		{Key: "INFRA_URL", Value: "  "},
+	})
+	want := "INFRA_URL=" + infraNatsURL()
+	if !strings.Contains(got, want+"\n") {
+		t.Errorf("got %q, want it to contain %q", got, want)
+	}
+	if strings.Count(got, "INFRA_URL=") != 1 {
+		t.Errorf("INFRA_URL appears %d times, want 1: %q", strings.Count(got, "INFRA_URL="), got)
+	}
+}

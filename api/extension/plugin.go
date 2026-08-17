@@ -113,14 +113,31 @@ func credError(c fiber.Ctx, err error) error {
 // pluginEnvFile renders the dotenv a plugin process reads: the three variables
 // every inflowv1 SDK plugin needs, followed by whatever extra variables the
 // extension declared (upstream API keys, endpoints, …).
+//
+// The three reserved keys are emitted exactly once, so a declared extra never
+// duplicates them. A declared INFRA_URL overrides the address this API derived:
+// the operator knows the host their plugin can actually reach Infra on, which
+// this API often can't (compose-internal "infra:4222" vs. the published one).
+// PLUGIN_ID and INFRA_CRED stay authoritative — a backend-issued identity and a
+// freshly minted secret — so a declared value for either is ignored, never
+// allowed to clobber them.
 func pluginEnvFile(pluginID, cred string, extra []models.EnvVar) string {
+	infraURL := infraNatsURL()
+	for _, e := range extra {
+		if strings.TrimSpace(e.Key) == "INFRA_URL" && strings.TrimSpace(e.Value) != "" {
+			infraURL = e.Value
+		}
+	}
+
 	var b strings.Builder
 	fmt.Fprintf(&b, "PLUGIN_ID=%s\n", pluginID)
-	fmt.Fprintf(&b, "INFRA_URL=%s\n", infraNatsURL())
+	fmt.Fprintf(&b, "INFRA_URL=%s\n", infraURL)
 	fmt.Fprintf(&b, "INFRA_CRED=%s\n", cred)
+
+	reserved := map[string]bool{"PLUGIN_ID": true, "INFRA_URL": true, "INFRA_CRED": true}
 	for _, e := range extra {
 		key := strings.TrimSpace(e.Key)
-		if key == "" {
+		if key == "" || reserved[key] {
 			continue
 		}
 		fmt.Fprintf(&b, "%s=%s\n", key, e.Value)
