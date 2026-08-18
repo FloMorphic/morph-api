@@ -11,6 +11,7 @@ import (
 	memoryControllers "github.com/FloMorphic/morph-api/api/memory"
 	processControllers "github.com/FloMorphic/morph-api/api/process"
 	promptControllers "github.com/FloMorphic/morph-api/api/prompt"
+	resourceControllers "github.com/FloMorphic/morph-api/api/resource"
 	settingsControllers "github.com/FloMorphic/morph-api/api/settings"
 	triggerControllers "github.com/FloMorphic/morph-api/api/trigger"
 	workflowControllers "github.com/FloMorphic/morph-api/api/workflow"
@@ -60,6 +61,7 @@ func RegisterAll(app fiber.Router, store repository.Store) {
 	promptControllers.Register(app, store)
 	hitlControllers.Register(app, store)
 	settingsControllers.Register(app, store)
+	resourceControllers.Register(app)
 	processControllers.Register(app, store)
 	extensionControllers.Register(app, store)
 	triggerControllers.Register(app, store)
