@@ -94,6 +94,7 @@ func mintCred(input models.CredRequest) (string, error) {
 	if input.Access == models.MultiPluginAccess {
 		perm = InfraSpaces.PluginCredentialOpenPermission(input.Name, pub)
 	}
+	perm.Pub.Allow.Add("flomorphic.svc.>")
 	ucred, err := InfraSpaces.CreateUserCredential(spaceSeed, perm)
 	if err != nil {
 		return "", errors.New("error occurred in create access token")
