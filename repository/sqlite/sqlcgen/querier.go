@@ -10,6 +10,8 @@ import (
 )
 
 type Querier interface {
+	ClearConnectDefault(ctx context.Context) error
+	CountConnectConnections(ctx context.Context) (int64, error)
 	CountContexts(ctx context.Context, search interface{}) (int64, error)
 	CountExtensions(ctx context.Context, arg CountExtensionsParams) (int64, error)
 	CountHumanTasks(ctx context.Context, arg CountHumanTasksParams) (int64, error)
@@ -19,6 +21,7 @@ type Querier interface {
 	CountTriggers(ctx context.Context, arg CountTriggersParams) (int64, error)
 	CountWorkflows(ctx context.Context, search interface{}) (int64, error)
 	CreateMemoryStore(ctx context.Context, arg CreateMemoryStoreParams) error
+	DeleteConnectConnection(ctx context.Context, id string) (int64, error)
 	DeleteContext(ctx context.Context, id string) (int64, error)
 	DeleteExtension(ctx context.Context, id string) (int64, error)
 	DeleteHumanTask(ctx context.Context, id string) (int64, error)
@@ -33,6 +36,7 @@ type Querier interface {
 	DeleteTrigger(ctx context.Context, id string) (int64, error)
 	DeleteWorkflow(ctx context.Context, id string) (int64, error)
 	GetBuiltinByName(ctx context.Context, name string) (Extension, error)
+	GetConnectConnection(ctx context.Context, id string) (ConnectConnection, error)
 	GetContext(ctx context.Context, id string) (Context, error)
 	GetExtension(ctx context.Context, id string) (Extension, error)
 	GetHumanTask(ctx context.Context, id string) (HumanTask, error)
@@ -46,6 +50,7 @@ type Querier interface {
 	GetTriggerBySlug(ctx context.Context, slug string) (Trigger, error)
 	GetWorkflow(ctx context.Context, id string) (Workflow, error)
 	InsertProcess(ctx context.Context, arg InsertProcessParams) (sql.Result, error)
+	ListConnectConnections(ctx context.Context) ([]ConnectConnection, error)
 	ListContexts(ctx context.Context, arg ListContextsParams) ([]Context, error)
 	ListDueScheduledProcesses(ctx context.Context, now int64) ([]Process, error)
 	ListEnabledSchedules(ctx context.Context) ([]Trigger, error)
@@ -57,8 +62,10 @@ type Querier interface {
 	ListPrompts(ctx context.Context, arg ListPromptsParams) ([]Prompt, error)
 	ListTriggers(ctx context.Context, arg ListTriggersParams) ([]Trigger, error)
 	ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]Workflow, error)
+	SetConnectDefault(ctx context.Context, arg SetConnectDefaultParams) (int64, error)
 	UpdateProcess(ctx context.Context, arg UpdateProcessParams) (int64, error)
 	UpdateTriggerState(ctx context.Context, arg UpdateTriggerStateParams) error
+	UpsertConnectConnection(ctx context.Context, arg UpsertConnectConnectionParams) error
 	UpsertContext(ctx context.Context, arg UpsertContextParams) error
 	UpsertExtension(ctx context.Context, arg UpsertExtensionParams) error
 	UpsertHumanTask(ctx context.Context, arg UpsertHumanTaskParams) error

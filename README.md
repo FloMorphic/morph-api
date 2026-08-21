@@ -156,6 +156,41 @@ as a `plugin` node that compiles to `request = <action>`.
 
 Plus `GET /health`.
 
+### Connect — OpenConnector integration (`/connect`)
+
+The central unit for OAuth / external-service auth. FloMorphic reaches 1,000+ SaaS
+providers through **OpenConnector** (oomol's hosted gateway at
+`connector.oomol.com`, or a self-hosted instance) so workflows and plugins never
+hold a provider credential.
+
+- **Connections** (`connect_connections`): stored gateways, each a base URL + a
+  `token` (runtime `oct_…` or `api-…`) for `/v1` execution and an optional
+  `admin_token` for the self-hosted `/api` management surface. Tokens are masked
+  on read. `GET/POST /connect/connections`, `…/id/:id[/default|/test]`.
+- **Gateway proxy** (`ALL /connect/gateway/*`): authenticated passthrough that
+  injects the right token (admin for `/api|/docs`, runtime otherwise) and
+  auto-corrects `console.oomol.com` → `connector.oomol.com`.
+
+**Central auth for plugins (NATS proxy).** Plugins run over NATS and hold no
+credential, so they cannot call OpenConnector directly. The backend exposes a
+single **generic** proxy — the NATS twin of `/connect/gateway/*` — on
+`flomorphic.svc.oc.proxy` (see [`inflow/ocproxy.go`](inflow/ocproxy.go)). It is
+deliberately dumb: it knows nothing about apps, accounts, actions or
+capabilities. It resolves the stored Connect connection, **injects the auth
+header**, forwards the request verbatim, and returns the gateway's raw response.
+
+| Subject | Body | Reply |
+|---|---|---|
+| `flomorphic.svc.oc.proxy` | `{connection?, method, path, query?, body?}` | `{status, body, error}` |
+
+All OpenConnector semantics live in the plugin: it builds the request (`path` like
+`/v1/connections` or `/v1/actions/gmail.send`), lists accounts, checks whether the
+chosen account has the capability an action needs, and executes — see the
+`gmail-oc` plugin. The subject lives **outside** the inflow node protocol (the
+`flomorphic.svc.oc.` namespace; inflow only provides transport) and is served on
+the builtin-plugins account, so a consumer needs an **open (multi)** runtime
+credential — a strict, plugin-scoped credential cannot publish on `flomorphic.>`.
+
 **Pagination.** List endpoints are page-based: `?page` (1-based) and `?per_page`
 (default 12, max 100), returning `{ list, total, page, per_page, total_pages }`.
 The count comes straight from SQL, so no cursor bookkeeping is needed.

@@ -94,6 +94,13 @@ func connectInflowWithRetry(ctx context.Context, store repository.Store) {
 		return
 	}
 
+	// OpenConnector services: let FloMorphic-coupled plugins resolve a connected
+	// account and run actions through the central Connect credential over NATS.
+	// Non-fatal — without it those plugins just can't reach the credential.
+	if err := inflow.StartOCServices(store); err != nil {
+		fmt.Printf("warning: OC services not started: %v\n", err)
+	}
+
 	// Scheduler: launches `scheduled` process rows (Continue After resumes) when
 	// their time arrives. Timer-armed on the nearest row, woken when a new one is
 	// recorded; its first pass catches rows that came due while the app was down.

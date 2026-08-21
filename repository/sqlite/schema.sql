@@ -183,6 +183,22 @@ CREATE TABLE IF NOT EXISTS triggers (
     updated_at     INTEGER NOT NULL
 );
 
+-- OpenConnector connections: the central auth gateways FloMorphic reaches
+-- external SaaS providers through (hosted oomol, or a self-hosted OpenConnector).
+-- `token` is the stored bearer used on every proxied call; `is_default` marks the
+-- one connection used when a caller does not name one. Several may coexist.
+CREATE TABLE IF NOT EXISTS connect_connections (
+    id          TEXT    PRIMARY KEY,
+    label       TEXT    NOT NULL DEFAULT '',
+    base_url    TEXT    NOT NULL DEFAULT '',
+    token       TEXT    NOT NULL DEFAULT '',
+    admin_token TEXT    NOT NULL DEFAULT '',
+    kind        TEXT    NOT NULL DEFAULT '',
+    is_default  INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_workflows_updated_at ON workflows (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_contexts_updated_at ON contexts (updated_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_memory_updated_at ON memory_stores (updated_at DESC, id DESC);
@@ -199,3 +215,4 @@ CREATE INDEX IF NOT EXISTS idx_extensions_builtin_name ON extensions (kind, name
 CREATE UNIQUE INDEX IF NOT EXISTS idx_triggers_slug ON triggers (slug) WHERE slug != '';
 CREATE INDEX IF NOT EXISTS idx_triggers_flow ON triggers (flow_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_triggers_schedule ON triggers (kind, enabled);
+CREATE INDEX IF NOT EXISTS idx_connect_updated_at ON connect_connections (updated_at DESC, id DESC);

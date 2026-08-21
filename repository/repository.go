@@ -219,6 +219,21 @@ type TriggerRepository interface {
 	MarkFired(ctx context.Context, id string, at int64) error
 }
 
+// ConnectRepository stores the OpenConnector gateways FloMorphic proxies through
+// (hosted oomol / self-hosted). It is a small unpaginated set with a single
+// default: Upsert makes the first connection default automatically and, when a
+// row is saved as default, demotes the others; SetDefault switches the default;
+// Delete promotes the newest remaining row when the default is removed.
+type ConnectRepository interface {
+	Upsert(ctx context.Context, c *models.ConnectConnection) error
+	GetByID(ctx context.Context, id string) (*models.ConnectConnection, error)
+	List(ctx context.Context) ([]models.ConnectConnection, error)
+	// Default returns the connection marked default, or ErrNotFound when none exist.
+	Default(ctx context.Context) (*models.ConnectConnection, error)
+	Delete(ctx context.Context, id string) error
+	SetDefault(ctx context.Context, id string) error
+}
+
 // Store aggregates the per-entity repositories behind one handle and owns the
 // underlying connection lifecycle.
 type Store interface {
@@ -231,6 +246,7 @@ type Store interface {
 	Processes() ProcessRepository
 	Extensions() ExtensionRepository
 	Triggers() TriggerRepository
+	Connect() ConnectRepository
 	Close() error
 }
 

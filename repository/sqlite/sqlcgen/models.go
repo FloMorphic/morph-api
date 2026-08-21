@@ -8,6 +8,18 @@ import (
 	"database/sql"
 )
 
+type ConnectConnection struct {
+	ID         string
+	Label      string
+	BaseUrl    string
+	Token      string
+	AdminToken string
+	Kind       string
+	IsDefault  int64
+	CreatedAt  int64
+	UpdatedAt  int64
+}
+
 type Context struct {
 	ID               string
 	Title            string

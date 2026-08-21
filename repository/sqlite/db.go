@@ -51,6 +51,7 @@ type store struct {
 	processes    *processRepo
 	extensions   *extensionRepo
 	triggers     *triggerRepo
+	connect      *connectRepo
 }
 
 // Open connects to the sqlite database at source (a file path for sqlite),
@@ -98,6 +99,7 @@ func Open(source string) (repository.Store, error) {
 		processes:    &processRepo{q: q},
 		extensions:   &extensionRepo{q: q},
 		triggers:     &triggerRepo{q: q},
+		connect:      &connectRepo{q: q},
 	}
 
 	// Seed builtin palette nodes on first run (idempotent, keyed by name). A
@@ -153,6 +155,7 @@ func (s *store) Memory() repository.MemoryRepository            { return s.memor
 func (s *store) Prompts() repository.PromptRepository           { return s.prompts }
 func (s *store) HumanTasks() repository.HumanTaskRepository     { return s.humanTasks }
 func (s *store) NodeSettings() repository.NodeSettingRepository { return s.nodeSettings }
+func (s *store) Connect() repository.ConnectRepository          { return s.connect }
 func (s *store) Processes() repository.ProcessRepository        { return s.processes }
 func (s *store) Extensions() repository.ExtensionRepository     { return s.extensions }
 func (s *store) Triggers() repository.TriggerRepository         { return s.triggers }
@@ -181,6 +184,7 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE human_tasks ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE processes ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE processes ADD COLUMN snapshot TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE connect_connections ADD COLUMN admin_token TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range migrations {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
