@@ -62,12 +62,17 @@ type CanvasNode struct {
 
 // PluginAction is one imported-plugin action available in this install, listed so
 // the model can drop a `plugin` node for it instead of inventing an integration.
+// Params is the action's parameter JSON Schema (the `@actions` form's jsonschema,
+// already parsed) — surfaced so the model can identify the action's inputs and
+// pre-fill them into the node's `data.body`. It may be empty for an action that
+// takes no parameters.
 type PluginAction struct {
-	PluginID    string `json:"pluginId"`
-	PluginName  string `json:"pluginName"`
-	Action      string `json:"action"`
-	Label       string `json:"label"`
-	Description string `json:"description"`
+	PluginID    string         `json:"pluginId"`
+	PluginName  string         `json:"pluginName"`
+	Action      string         `json:"action"`
+	Label       string         `json:"label"`
+	Description string         `json:"description"`
+	Params      map[string]any `json:"params,omitempty"`
 }
 
 // Input is everything BuildPrompt needs beyond the static catalog: the goal, the
@@ -127,7 +132,7 @@ func pluginLines(plugins []PluginAction) []string {
 	lines := []string{
 		"",
 		"## Plugins available",
-		"These imported-plugin actions are registered in this install. Use one by adding a node with `kind: \"plugin\"` and `data: { \"pluginId\": \"<id>\", \"action\": \"<action>\" }` (copy both verbatim from the list), a `title`, and a `note`. Do NOT invent a plugin or an action that is not listed, and do NOT fill in the action's own input fields or a settings profile — the designer completes those in the drawer after import. A plugin node has a single output port; wire it like any other node.",
+		"These imported-plugin actions are registered in this install. Use one by adding a node with `kind: \"plugin\"` and `data: { \"pluginId\": \"<id>\", \"action\": \"<action>\" }` (copy both verbatim from the list), a `title`, and a `note`. Do NOT invent a plugin or an action that is not listed, and do NOT set a settings profile — the designer selects that in the drawer after import. Each action lists its parameter schema; when you know the values, pre-fill them into the node's `data.body` object using the schema's property names (leave `body` out, or partial, when a value is unknown — the designer completes the rest in the drawer). A plugin node has a single output port; wire it like any other node.",
 	}
 
 	order := []string{}
@@ -153,9 +158,31 @@ func pluginLines(plugins []PluginAction) []string {
 				line += ": " + desc
 			}
 			lines = append(lines, line)
+			if params := paramsLine(a.Params); params != "" {
+				lines = append(lines, "  "+params)
+			}
 		}
 	}
 	return lines
+}
+
+// paramsLine renders one action's parameter schema as a compact single line, or
+// "" when the action declares no parameters (an empty or property-less schema).
+// The schema is the action's `@actions` form jsonschema; the model reads the
+// property names from it to fill the node's `data.body`.
+func paramsLine(schema map[string]any) string {
+	if len(schema) == 0 {
+		return ""
+	}
+	// A schema whose `properties` is empty carries no inputs worth listing.
+	if props, ok := schema["properties"].(map[string]any); ok && len(props) == 0 {
+		return ""
+	}
+	compact, err := json.Marshal(schema)
+	if err != nil {
+		return ""
+	}
+	return "parameters (`data.body`) schema: " + string(compact)
 }
 
 // canvasLines renders the "## Canvas" section: the ids already placed (to wire

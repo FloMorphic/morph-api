@@ -67,8 +67,18 @@ func TestBuildPromptCanvasAndPlugins(t *testing.T) {
 		Goal:  "wire it",
 		Nodes: []CanvasNode{{ID: "n1", Type: "llm", Title: "Classify"}},
 		Plugins: []PluginAction{
-			{PluginID: "jira", PluginName: "Jira", Action: "create_issue", Label: "Create issue", Description: "open a ticket"},
+			{PluginID: "jira", PluginName: "Jira", Action: "create_issue", Label: "Create issue", Description: "open a ticket",
+				Params: map[string]any{
+					"type":     "object",
+					"required": []any{"summary"},
+					"properties": map[string]any{
+						"summary": map[string]any{"type": "string"},
+					},
+				}},
 			{PluginID: "jira", PluginName: "Jira", Action: "add_comment", Label: "Add comment"},
+			// An action whose schema has no properties must not render a params line.
+			{PluginID: "jira", PluginName: "Jira", Action: "noop", Label: "No-op",
+				Params: map[string]any{"type": "object", "properties": map[string]any{}}},
 		},
 	})
 
@@ -83,6 +93,14 @@ func TestBuildPromptCanvasAndPlugins(t *testing.T) {
 	}
 	if !strings.Contains(out, "- `action: \"add_comment\"` — Add comment") {
 		t.Error("plugin action line (no description) missing")
+	}
+	// The action with a real schema renders a parameters line naming its property.
+	if !strings.Contains(out, "parameters (`data.body`) schema:") || !strings.Contains(out, `"summary"`) {
+		t.Error("plugin action parameters line missing")
+	}
+	// The property-less schema must not produce a parameters line.
+	if strings.Contains(out, `"action: "noop""`) && strings.Contains(out, "parameters (`data.body`) schema: {\"properties\":{},") {
+		t.Error("empty-properties schema rendered a parameters line")
 	}
 	if !strings.Contains(out, `- n1 · llm · "Classify"`) {
 		t.Error("canvas node line missing")

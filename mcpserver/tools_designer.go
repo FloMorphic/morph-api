@@ -219,6 +219,9 @@ func pluginActions(ctx context.Context, store repository.Store) []designer.Plugi
 			Action:      row.Action,
 			Label:       row.Name,
 			Description: strings.TrimSpace(row.Description),
+			// The action's parameter schema, captured on sync, so the prompt lists
+			// each action's inputs without a live round trip to the plugin.
+			Params: row.Parameters.Schema,
 		})
 	}
 	return out

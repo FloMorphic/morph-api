@@ -91,6 +91,10 @@ func (ctl *controller) pluginActions(c fiber.Ctx) []designer.PluginAction {
 			Action:      row.Action,
 			Label:       row.Name,
 			Description: strings.TrimSpace(row.Description),
+			// The action's parameter schema was captured on sync (the plugin's
+			// `@actions` form jsonschema, parsed into params.schema), so the prompt
+			// can list each action's inputs without a live round trip to the plugin.
+			Params: row.Parameters.Schema,
 		})
 	}
 	return out
