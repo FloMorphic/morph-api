@@ -210,6 +210,12 @@ type InstallInfo struct {
 	Env string `json:"env"`
 	// EnvFile is the filename Env should be saved as.
 	EnvFile string `json:"envFile"`
+	// Control is the body of the lifecycle script the installer drops next to
+	// the plugin (`flomorphic-ctl.sh`): start/stop/restart/status/logs, runtime
+	// agnostic. Unlike Env/Script it carries no credential.
+	Control string `json:"control"`
+	// ControlFile is the filename Control is written as.
+	ControlFile string `json:"controlFile"`
 	// Dir is the install directory the command targets.
 	Dir string `json:"dir"`
 	// PluginID is the inflowv1 identity the credential is scoped to.

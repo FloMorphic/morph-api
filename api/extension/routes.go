@@ -37,6 +37,7 @@ func Register(api fiber.Router, store repository.Store) {
 	// already has the plugin on disk. Both mint the plugin's credential.
 	g.Get("/id/:id/install", ctl.installInfo)
 	g.Get("/id/:id/install.sh", ctl.installScriptRaw)
+	g.Get("/id/:id/ctl.sh", ctl.controlScriptRaw) // lifecycle helper (no credential)
 	g.Get("/id/:id/env", ctl.installEnv)
 
 	// Rebuild a plugin's palette rows from its live @actions (see sync.go).
