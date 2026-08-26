@@ -383,15 +383,45 @@ func startNodesFor(rec *models.Process) []string {
 	return nonEmpty([]string{rec.StartNodeID})
 }
 
-// StopWorkflow asks the engine to stop the run behind a process row (by its
-// indexId) and marks the row `stopped`. The row keeps the pid and resource url
-// captured at launch, so no extra input is needed (cf. inspector-api's stopByPid
-// which takes them in the request body).
+// StopWorkflow cancels the run behind a process row (by its indexId) and marks
+// the row `stopped`. What "cancel" means depends on where the row is in its
+// lifecycle:
+//
+//   - scheduled: the row was recorded but never dispatched — no engine process
+//     exists for its pid, so calling /ps/stop would error. We only flip the row
+//     to `stopped` (which drops it out of the scheduler's `status='scheduled'`
+//     queue) and wake the scheduler to re-arm its timer in case this was the
+//     nearest row. This is the case that would otherwise still fire after a stop.
+//   - running: ask the engine to stop the live run, then mark the row stopped.
+//   - already terminal (finished/stopped/failed): nothing to do — idempotent.
+//
+// The row keeps the pid and resource url captured at launch, so no extra input
+// is needed (cf. inspector-api's stopByPid which takes them in the request body).
 func StopWorkflow(ctx context.Context, store repository.Store, indexID int64) (*models.Process, error) {
 	rec, err := store.Processes().GetByIndex(ctx, indexID)
 	if err != nil {
 		return nil, err
 	}
+
+	// Already done — return as-is so a double-stop is a harmless no-op.
+	switch rec.Status {
+	case models.ProcessFinished, models.ProcessStopped, models.ProcessFailed:
+		return rec, nil
+	}
+
+	// A scheduled row has no engine process to stop; cancelling it is purely a
+	// status change. Flip it first, then notify the scheduler to re-arm — the row
+	// it was armed for may have just been cancelled.
+	if rec.Status == models.ProcessScheduled {
+		rec.Status = models.ProcessStopped
+		rec.FinishedAt = nowMillis()
+		if err := store.Processes().Update(ctx, rec); err != nil {
+			return rec, fmt.Errorf("record stop: %w", err)
+		}
+		notifyScheduler()
+		return rec, nil
+	}
+
 	if rec.PID == "" {
 		return rec, fmt.Errorf("process %d has no pid to stop", indexID)
 	}
