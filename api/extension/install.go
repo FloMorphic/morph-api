@@ -317,7 +317,7 @@ docker_exists()  { docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "$N
 cmd_build() {
   resolve_runtime
   case "$RUNTIME" in
-    go)     need go;  say "building"; go build -o "bin/$NAME" . ;;
+    go)     need go;  say "building"; mkdir -p bin; go build -o "bin/$NAME" . ;;
     node)   need npm; say "installing dependencies"; npm install; npm run build --if-present ;;
     docker) need docker; say "building image $NAME"; docker build -t "$NAME" . ;;
   esac
