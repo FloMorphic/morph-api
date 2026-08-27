@@ -426,7 +426,48 @@ func StopWorkflow(ctx context.Context, store repository.Store, indexID int64) (*
 		return rec, fmt.Errorf("process %d has no pid to stop", indexID)
 	}
 	if _, err := fuse.StopProcess(ctx, rec.PID, rec.ResourceURL); err != nil {
-		return rec, fmt.Errorf("stop process %d (pid=%s): %w", indexID, rec.PID, err)
+		// The engine answers Not Found for a pid it no longer knows — a fractal
+		// instance forgets a run's pid the instant it ends. So a stop can fail
+		// simply because the run already finished while this row is still marked
+		// `running` (a proc.finish that never made it back on inflow.event.log).
+		// Before surfacing the misleading error, consult infra's week-long trace
+		// and act on what it says the run actually did:
+		trace, terr := fetchInfraTrace(ctx, rec.PID)
+		switch {
+		case terr != nil:
+			// Couldn't determine the status (infra unreachable/misconfigured) — do
+			// not guess; surface the original stop error unchanged.
+			fmt.Printf("process: stop %d infra trace lookup failed for pid=%s: %v\n", indexID, rec.PID, terr)
+			return rec, fmt.Errorf("stop process %d (pid=%s): %w", indexID, rec.PID, err)
+		case trace.Finished():
+			// Infra recorded a finish_at — the run really did end. Reconcile the row
+			// to the status the trace reports and treat the stop as a satisfied no-op.
+			rec.Status = finishStatus(trace.Data.Status)
+			rec.FinishedAt = trace.FinishAt
+			rec.DurationMs = trace.Data.DurationMs
+			if uerr := store.Processes().Update(ctx, rec); uerr != nil {
+				return rec, fmt.Errorf("reconcile finished process %d (pid=%s): %w", indexID, rec.PID, uerr)
+			}
+			fmt.Printf("process: stop %d found pid=%s already finished via infra trace (status=%s)\n", indexID, rec.PID, rec.Status)
+			return rec, nil
+		case trace != nil:
+			// A trace with no finish_at means infra still sees the run as live
+			// (start_at set, finish_at 0). The engine and infra disagree, but we
+			// have positive evidence the run is running — do not clobber the row;
+			// surface the stop error so the caller knows it is genuinely still up.
+			return rec, fmt.Errorf("stop process %d (pid=%s): infra trace shows it still running: %w", indexID, rec.PID, err)
+		default:
+			// No trace anywhere (infra has no record) and the engine has forgotten
+			// the pid: there is no evidence the run is still alive. Best-effort mark
+			// the stuck row `stopped` so it does not sit as `running` forever.
+			rec.Status = models.ProcessStopped
+			rec.FinishedAt = nowMillis()
+			if uerr := store.Processes().Update(ctx, rec); uerr != nil {
+				return rec, fmt.Errorf("record stop of untraceable process %d (pid=%s): %w", indexID, rec.PID, uerr)
+			}
+			fmt.Printf("process: stop %d marked stopped — pid=%s unknown to engine and infra has no trace\n", indexID, rec.PID)
+			return rec, nil
+		}
 	}
 	rec.Status = models.ProcessStopped
 	rec.FinishedAt = nowMillis()
