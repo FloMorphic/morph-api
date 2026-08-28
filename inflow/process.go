@@ -2,6 +2,7 @@ package inflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	fuse "github.com/Inflowenger/inflow-fusion/inflow"
 	inflowModels "github.com/Inflowenger/inflow-fusion/models"
 	"github.com/bytedance/sonic"
+	"github.com/bytedance/sonic/decoder"
 	"github.com/google/uuid"
 )
 
@@ -426,6 +428,22 @@ func StopWorkflow(ctx context.Context, store repository.Store, indexID int64) (*
 		return rec, fmt.Errorf("process %d has no pid to stop", indexID)
 	}
 	if _, err := fuse.StopProcess(ctx, rec.PID, rec.ResourceURL); err != nil {
+		// A 202/OK stop is graceful — the engine accepted the stop and is winding the
+		// run down. Its body is {"data":"OK",...}, a status string, which inflow-fusion
+		// fails to decode into ProcessResponse{Data:{PID}} and surfaces as a sonic
+		// MismatchTypeError. That decode error is the *only* way StopProcess reports a
+		// 2xx-but-non-pid body (a non-2xx yields a plain body error; data null/{pid}
+		// decode cleanly), so it unambiguously means "accepted". Just record the stop —
+		// no infra trace needed; the run's own finish will reconcile status later.
+		var mismatch *decoder.MismatchTypeError
+		if errors.As(err, &mismatch) {
+			rec.Status = models.ProcessStopped
+			rec.FinishedAt = nowMillis()
+			if uerr := store.Processes().Update(ctx, rec); uerr != nil {
+				return rec, fmt.Errorf("record stop: %w", uerr)
+			}
+			return rec, nil
+		}
 		// The engine answers Not Found for a pid it no longer knows — a fractal
 		// instance forgets a run's pid the instant it ends. So a stop can fail
 		// simply because the run already finished while this row is still marked
