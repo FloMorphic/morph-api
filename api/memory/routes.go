@@ -19,6 +19,8 @@ func Register(api fiber.Router, store repository.Store) {
 	g := api.Group("/memory")
 	g.Get("", ctl.list)
 	g.Post("", ctl.create)
+	// Static sub-path before /:id so it is not swallowed as an id.
+	g.Post("/embedding-models", ctl.embeddingModels)
 	g.Get("/:id", ctl.getByID)
 	g.Delete("/:id", ctl.deleteByID)
 

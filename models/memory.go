@@ -57,9 +57,35 @@ func (c *VectorMemoryConfig) SQLiteDistanceMetric() string {
 	}
 }
 
+// SimilarityScore converts a raw vec0 distance (smaller is closer) into a
+// normalized similarity where higher means more similar, so callers can rank and
+// threshold on an intuitive scale regardless of the store's metric:
+//
+//	cosine  distance = 1 - cosine_similarity  ⇒  score = 1 - distance, clamped to [0,1]
+//	L2      distance ≥ 0, unbounded           ⇒  score = 1/(1+distance), in (0,1]
+//
+// Both are monotonic in distance, so ordering by distance ascending is the same
+// as ordering by score descending — a search can stop at the first sub-threshold
+// hit.
+func (c *VectorMemoryConfig) SimilarityScore(distance float64) float64 {
+	if c.SQLiteDistanceMetric() == "L2" {
+		return 1 / (1 + distance)
+	}
+	// cosine (also the fallback for dot / unset)
+	score := 1 - distance
+	if score < 0 {
+		return 0
+	}
+	if score > 1 {
+		return 1
+	}
+	return score
+}
+
 // VectorMatch is one hit from a vector similarity search: the stored document
-// id, its original text/metadata, and the distance to the query vector (smaller
-// is closer, per the store's metric).
+// id, its original text/metadata, the raw distance to the query vector (smaller
+// is closer, per the store's metric), and a normalized similarity Score (higher
+// is nearer) derived from that distance via VectorMemoryConfig.SimilarityScore.
 type VectorMatch struct {
 	DocID string `json:"docId"`
 	// Partition is the record's partition/tag key, echoed back so a caller can
@@ -68,6 +94,7 @@ type VectorMatch struct {
 	Content   string         `json:"content"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 	Distance  float64        `json:"distance"`
+	Score     float64        `json:"score"`
 }
 
 // TableColumn describes one column of a document store's schema.

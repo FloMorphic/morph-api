@@ -26,10 +26,11 @@ type storeRequest struct {
 	StoreID   string `json:"storeId"`
 	Query     string `json:"query"`
 	Input     any    `json:"input"`
-	Key       string `json:"key"`
-	Text      string `json:"text"`
-	TopK      int    `json:"topK"`
-	Partition string `json:"partition"`
+	Key       string  `json:"key"`
+	Text      string  `json:"text"`
+	TopK      int     `json:"topK"`
+	Partition string  `json:"partition"`
+	MinScore  float64 `json:"minScore"`
 }
 
 // HandleDocStore serves svc.store.doc.{read,write}. It resolves the referenced
@@ -188,7 +189,7 @@ func HandleVecStore(store repository.Store, header nats.Header, data []byte) ([]
 		if err != nil {
 			return nil, fmt.Errorf("vector store %s: %w", action, err)
 		}
-		matches, err := store.Memory().SearchVectors(ctx, rec, vector, req.TopK, vecPartition(req, scopedDataMap(body.Data)))
+		matches, err := store.Memory().SearchVectors(ctx, rec, vector, req.TopK, vecPartition(req, scopedDataMap(body.Data)), req.MinScore)
 		if err != nil {
 			return nil, fmt.Errorf("vector store %s: %w", action, err)
 		}

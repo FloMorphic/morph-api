@@ -103,11 +103,13 @@ type MemoryRepository interface {
 	IndexVector(ctx context.Context, store *models.MemoryStore, content string, vector []float32, metadata map[string]any, partition string) (string, error)
 	// SearchVectors runs a k-nearest-neighbour search over the store's index for
 	// the given query vector and returns the closest matches (by the store's
-	// configured metric), nearest first. k is clamped to a sane bound by the
-	// implementation. When partition is non-empty the search is restricted to
-	// records stored under that partition key, so the top-k is computed within the
-	// partition rather than across the whole index.
-	SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int, partition string) ([]models.VectorMatch, error)
+	// configured metric), nearest first, each carrying a normalized similarity
+	// Score (higher is nearer). k is clamped to a sane bound by the implementation.
+	// When partition is non-empty the search is restricted to records stored under
+	// that partition key, so the top-k is computed within the partition rather than
+	// across the whole index. minScore, when > 0, drops matches whose similarity
+	// score is below it, so a caller can ask for "near enough" hits only.
+	SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int, partition string, minScore float64) ([]models.VectorMatch, error)
 }
 
 // PromptRepository is CRUD for prompt templates (PromptRecord).

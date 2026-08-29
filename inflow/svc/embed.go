@@ -1,48 +1,48 @@
 package svc
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"net/http"
 	"strings"
-	"time"
 
 	"github.com/FloMorphic/morph-api/models"
-	"github.com/bytedance/sonic"
+	"github.com/tmc/langchaingo/llms/openai"
 )
 
-// providerBaseURLs maps a known embedding provider name to the base URL of its
-// OpenAI-compatible embeddings API. A store may instead set Provider to a full
-// URL (see embedBaseURL), so this only needs the common shorthands.
+// Embedding providers all speak the OpenAI embeddings wire format, either
+// natively (OpenAI) or through a documented OpenAI-compatibility endpoint
+// (Gemini, Cohere, Mistral, Voyage, Together). Driving every provider through
+// langchaingo's openai client — the same client llm/client.go uses for chat —
+// keeps the backend on one embedding path instead of a hand-rolled HTTP client
+// per provider, and lets Gemini reuse the OpenAI-compat base URL trick already
+// established for chat (see llm.geminiOpenAIBaseURL).
+//
+// providerBaseURLs maps a known provider name to the base of its
+// OpenAI-compatible embeddings API, including the `/v1`-style path segment
+// langchaingo appends `/embeddings` onto. A store may instead set Provider to a
+// full base URL (see embedBaseURL) for a self-hosted or otherwise
+// OpenAI-compatible endpoint.
 var providerBaseURLs = map[string]string{
 	"openai":   "https://api.openai.com/v1",
+	"gemini":   "https://generativelanguage.googleapis.com/v1beta/openai",
+	"google":   "https://generativelanguage.googleapis.com/v1beta/openai",
+	"cohere":   "https://api.cohere.ai/compatibility/v1",
+	"mistral":  "https://api.mistral.ai/v1",
 	"voyage":   "https://api.voyageai.com/v1",
 	"voyageai": "https://api.voyageai.com/v1",
-	"mistral":  "https://api.mistral.ai/v1",
 	"together": "https://api.together.xyz/v1",
 }
 
-// embedHTTPClient is shared; embedding calls are short and the timeout guards a
-// hung provider from stalling a svc request past its ReqTimeoutSecound.
-var embedHTTPClient = &http.Client{Timeout: 20 * time.Second}
-
-// embedRequest / embedResponse mirror the OpenAI embeddings API, which the
-// supported providers all speak. `input` accepts a batch so index/search can
-// embed several texts in one round trip.
-type embedRequest struct {
-	Model string   `json:"model"`
-	Input []string `json:"input"`
-}
-
-type embedResponse struct {
-	Data []struct {
-		Index     int       `json:"index"`
-		Embedding []float32 `json:"embedding"`
-	} `json:"data"`
-	Error *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+// dimensionCapableModels is the set of embedding models that honour the OpenAI
+// `dimensions` request field (Matryoshka / configurable-output models). Only for
+// these do we forward the store's configured Dimensions to the provider — sending
+// the field to a fixed-width model makes the provider reject the request. Keyed by
+// lower-cased model id. A model absent here is assumed fixed-width: the provider
+// returns its native dimension and embedTexts validates it matches the store.
+var dimensionCapableModels = map[string]bool{
+	"text-embedding-3-small": true,
+	"text-embedding-3-large": true,
+	"gemini-embedding-001":   true,
 }
 
 // embedTexts turns each input string into a vector using the store's captured
@@ -70,61 +70,52 @@ func embedTexts(ctx context.Context, cfg *models.VectorMemoryConfig, inputs []st
 		}
 	}
 
+	embedder, err := newEmbedder(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	vectors, err := embedder.CreateEmbedding(ctx, inputs)
+	if err != nil {
+		return nil, fmt.Errorf("embed: call %s: %w", cfg.Provider, err)
+	}
+	if len(vectors) != len(inputs) {
+		return nil, fmt.Errorf("embed: expected %d vectors, got %d", len(inputs), len(vectors))
+	}
+	for _, v := range vectors {
+		if len(v) != cfg.Dimensions {
+			return nil, fmt.Errorf("embed: model %q returned %d dimensions but the store index expects %d",
+				cfg.EmbeddingModel, len(v), cfg.Dimensions)
+		}
+	}
+	return vectors, nil
+}
+
+// newEmbedder builds the langchaingo openai client for a store's embedding
+// config: the provider's OpenAI-compatible base URL, the store token as the
+// bearer key, and the embedding model. The configured Dimensions is forwarded
+// only for models that accept it (see dimensionCapableModels) so a fixed-width
+// model is not handed a `dimensions` field it would reject.
+func newEmbedder(cfg *models.VectorMemoryConfig) (*openai.LLM, error) {
 	base, err := embedBaseURL(cfg.Provider)
 	if err != nil {
 		return nil, err
 	}
 
-	payload, err := sonic.Marshal(embedRequest{Model: cfg.EmbeddingModel, Input: inputs})
-	if err != nil {
-		return nil, fmt.Errorf("embed: marshal request: %w", err)
+	opts := []openai.Option{
+		openai.WithToken(cfg.Token),
+		openai.WithBaseURL(base),
+		openai.WithEmbeddingModel(cfg.EmbeddingModel),
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/embeddings", bytes.NewReader(payload))
-	if err != nil {
-		return nil, fmt.Errorf("embed: build request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+cfg.Token)
-
-	resp, err := embedHTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("embed: call %s: %w", cfg.Provider, err)
-	}
-	defer resp.Body.Close()
-
-	var out embedResponse
-	if err := sonic.ConfigDefault.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("embed: decode response (status %d): %w", resp.StatusCode, err)
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := "provider returned an error"
-		if out.Error != nil && out.Error.Message != "" {
-			msg = out.Error.Message
-		}
-		return nil, fmt.Errorf("embed: %s status %d: %s", cfg.Provider, resp.StatusCode, msg)
-	}
-	if len(out.Data) != len(inputs) {
-		return nil, fmt.Errorf("embed: expected %d vectors, got %d", len(inputs), len(out.Data))
+	if cfg.Dimensions > 0 && dimensionCapableModels[strings.ToLower(strings.TrimSpace(cfg.EmbeddingModel))] {
+		opts = append(opts, openai.WithEmbeddingDimensions(cfg.Dimensions))
 	}
 
-	// The API does not guarantee ordering, so index by the response's `index`.
-	vectors := make([][]float32, len(inputs))
-	for _, d := range out.Data {
-		if d.Index < 0 || d.Index >= len(vectors) {
-			return nil, fmt.Errorf("embed: response index %d out of range", d.Index)
-		}
-		if len(d.Embedding) != cfg.Dimensions {
-			return nil, fmt.Errorf("embed: model %q returned %d dimensions but the store index expects %d",
-				cfg.EmbeddingModel, len(d.Embedding), cfg.Dimensions)
-		}
-		vectors[d.Index] = d.Embedding
+	llm, err := openai.New(opts...)
+	if err != nil {
+		return nil, fmt.Errorf("embed: init %s embedder: %w", cfg.Provider, err)
 	}
-	for i, v := range vectors {
-		if v == nil {
-			return nil, fmt.Errorf("embed: no vector returned for input %d", i)
-		}
-	}
-	return vectors, nil
+	return llm, nil
 }
 
 // EmbedOne is the exported single-text embedding entry point for callers outside
@@ -145,9 +136,9 @@ func embedOne(ctx context.Context, cfg *models.VectorMemoryConfig, input string)
 }
 
 // embedBaseURL resolves the embeddings API base URL from the store's provider:
-// a known provider name maps to its endpoint, and a value that is already a URL
-// is used as-is (with any trailing slash trimmed) so a self-hosted or otherwise
-// OpenAI-compatible endpoint works without code changes.
+// a known provider name maps to its OpenAI-compatible endpoint, and a value that
+// is already a URL is used as-is (with any trailing slash trimmed) so a
+// self-hosted or otherwise OpenAI-compatible endpoint works without code changes.
 func embedBaseURL(provider string) (string, error) {
 	p := strings.TrimSpace(provider)
 	if p == "" {

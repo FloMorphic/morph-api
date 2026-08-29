@@ -390,7 +390,7 @@ func (r *memoryRepo) IndexVector(ctx context.Context, store *models.MemoryStore,
 // vector, returning the k nearest matches (nearest first) with their stored
 // text and metadata. The query vector width is validated up front and k is
 // clamped so a caller can never ask for an unbounded scan.
-func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int, partition string) ([]models.VectorMatch, error) {
+func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int, partition string, minScore float64) ([]models.VectorMatch, error) {
 	if store == nil || store.Type != models.MemoryVector || store.Vector == nil {
 		return nil, fmt.Errorf("sqlite: search requires a vector store")
 	}
@@ -448,7 +448,13 @@ func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStor
 		if err := rows.Scan(&docID, &part, &content, &metaJSON, &distance); err != nil {
 			return nil, fmt.Errorf("sqlite: scan vector match: %w", err)
 		}
-		m := models.VectorMatch{DocID: docID, Partition: part, Content: content, Distance: distance}
+		score := store.Vector.SimilarityScore(distance)
+		// Rows come back nearest-first (distance ascending ⇒ score descending), so
+		// the first hit under the threshold means every later one is too — stop.
+		if minScore > 0 && score < minScore {
+			break
+		}
+		m := models.VectorMatch{DocID: docID, Partition: part, Content: content, Distance: distance, Score: score}
 		if metaJSON != "" && metaJSON != "{}" {
 			var meta map[string]any
 			if err := json.Unmarshal([]byte(metaJSON), &meta); err == nil {

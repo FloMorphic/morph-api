@@ -148,11 +148,12 @@ func registerMemoryTools(s *server.MCPServer, store repository.Store) {
 	// --- vector stores ------------------------------------------------------
 
 	s.AddTool(mcp.NewTool("flo_search_vectors",
-		mcp.WithDescription("Semantic search over a vector store: embeds `text` with the store's captured embedding config and returns the nearest matches (content, metadata, distance)."),
+		mcp.WithDescription("Semantic search over a vector store: embeds `text` with the store's captured embedding config and returns the nearest matches (content, metadata, distance, and a normalized similarity score where higher is nearer)."),
 		mcp.WithString("storeId", mcp.Required(), mcp.Description("vector store id (mem_…)")),
 		mcp.WithString("text", mcp.Required(), mcp.Description("query text to embed and search by")),
 		mcp.WithNumber("topK", mcp.Description("number of matches to return")),
 		mcp.WithString("partition", mcp.Description("restrict the search to this partition/tag")),
+		mcp.WithNumber("minScore", mcp.Description("drop matches whose similarity score is below this threshold (0..1); 0 keeps all")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id, err := req.RequireString("storeId")
 		if err != nil {
@@ -170,7 +171,7 @@ func registerMemoryTools(s *server.MCPServer, store repository.Store) {
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("embedding failed", err), nil
 		}
-		matches, err := repo.SearchVectors(ctx, rec, vector, req.GetInt("topK", 0), strings.TrimSpace(req.GetString("partition", "")))
+		matches, err := repo.SearchVectors(ctx, rec, vector, req.GetInt("topK", 0), strings.TrimSpace(req.GetString("partition", "")), req.GetFloat("minScore", 0))
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("search failed", err), nil
 		}

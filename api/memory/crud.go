@@ -4,9 +4,38 @@ import (
 	"strings"
 
 	"github.com/FloMorphic/morph-api/etc"
+	"github.com/FloMorphic/morph-api/inflow/svc"
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/gofiber/fiber/v3"
 )
+
+// embeddingModelsRequest is the body of POST /memory/embedding-models: the
+// provider to query and the API key that authenticates the listing call. The
+// token is used only to make the provider's list-models request and is never
+// stored — the add-store form sends it so the model dropdown can offer the models
+// the key actually has access to.
+type embeddingModelsRequest struct {
+	Provider string `json:"provider"`
+	Token    string `json:"token"`
+}
+
+// embeddingModels handles POST /memory/embedding-models — proxies the provider's
+// list-models API (see svc.ListEmbeddingModels) so the browser never calls the
+// provider directly (CORS, and the key stays server-side).
+func (ctl *controller) embeddingModels(c fiber.Ctx) error {
+	var req embeddingModelsRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return etc.Fail(c, fiber.StatusBadRequest, "invalid embedding-models payload")
+	}
+	if strings.TrimSpace(req.Provider) == "" {
+		return etc.Fail(c, fiber.StatusBadRequest, "provider is required")
+	}
+	list, err := svc.ListEmbeddingModels(c.Context(), req.Provider, req.Token)
+	if err != nil {
+		return etc.Fail(c, fiber.StatusBadGateway, err.Error())
+	}
+	return etc.OK(c, fiber.Map{"models": list})
+}
 
 // list handles GET /memory — returns every store as a plain array (the web app
 // treats memory as a small, un-paginated collection).

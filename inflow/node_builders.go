@@ -353,7 +353,7 @@ func buildStoreNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData 
 	// partition is the vector record's namespace/tag an index stamps and a search
 	// filters on. The node's scope is NOT carried: the runtime resolves it before
 	// the call and delivers the scoped object as the request's `data`.
-	for _, k := range []string{"storeId", "query", "input", "key", "text", "topK", "partition"} {
+	for _, k := range []string{"storeId", "query", "input", "key", "text", "topK", "partition", "minScore"} {
 		if v, ok := nodeData[k]; ok {
 			payload[k] = v
 		}

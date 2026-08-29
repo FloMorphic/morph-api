@@ -55,7 +55,7 @@ func TestVectorPartitioning(t *testing.T) {
 	query := []float32{1, 0, 0}
 
 	// Filtered to p1: only a and b, and each echoes its partition.
-	p1, err := mem.SearchVectors(ctx, store, query, 10, "p1")
+	p1, err := mem.SearchVectors(ctx, store, query, 10, "p1", 0)
 	if err != nil {
 		t.Fatalf("search p1: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestVectorPartitioning(t *testing.T) {
 	}
 
 	// Filtered to p2: only c.
-	p2, err := mem.SearchVectors(ctx, store, query, 10, "p2")
+	p2, err := mem.SearchVectors(ctx, store, query, 10, "p2", 0)
 	if err != nil {
 		t.Fatalf("search p2: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestVectorPartitioning(t *testing.T) {
 	}
 
 	// Unfiltered: spans every partition.
-	all, err := mem.SearchVectors(ctx, store, query, 10, "")
+	all, err := mem.SearchVectors(ctx, store, query, 10, "", 0)
 	if err != nil {
 		t.Fatalf("search all: %v", err)
 	}

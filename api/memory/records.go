@@ -47,9 +47,10 @@ type documentRecord struct {
 // vectorSearchRequest is the body of POST /memory/:id/search. An optional
 // `partition` restricts the search to records stored under that partition/tag.
 type vectorSearchRequest struct {
-	Text      string `json:"text"`
-	TopK      int    `json:"topK"`
-	Partition string `json:"partition"`
+	Text      string  `json:"text"`
+	TopK      int     `json:"topK"`
+	Partition string  `json:"partition"`
+	MinScore  float64 `json:"minScore"`
 }
 
 // vectorIndexRequest is the body of POST /memory/:id/vectors: the text to embed
@@ -184,7 +185,7 @@ func (ctl *controller) searchVectors(c fiber.Ctx) error {
 	if err != nil {
 		return etc.Fail(c, fiber.StatusBadGateway, err.Error())
 	}
-	matches, err := ctl.repo.SearchVectors(c.Context(), rec, vector, req.TopK, strings.TrimSpace(req.Partition))
+	matches, err := ctl.repo.SearchVectors(c.Context(), rec, vector, req.TopK, strings.TrimSpace(req.Partition), req.MinScore)
 	if err != nil {
 		return etc.Fail(c, fiber.StatusInternalServerError, err.Error())
 	}
