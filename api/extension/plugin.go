@@ -92,9 +92,18 @@ func mintCred(input models.CredRequest) (string, error) {
 
 	var perm = InfraSpaces.PluginCredentialStrictPermission(input.Name, input.PluginId, pub)
 	if input.Access == models.MultiPluginAccess {
+		// Open credentials leave Pub/Sub allow-lists empty, which NATS reads as
+		// "allow all". Adding a single publish subject would flip that to
+		// "allow ONLY that subject" — stripping the plugin of its ability to
+		// respond on _INBOX.> and breaking every builtin node. So leave the open
+		// credential untouched: it can already reach flomorphic.svc.>.
 		perm = InfraSpaces.PluginCredentialOpenPermission(input.Name, pub)
+	} else {
+		// Strict credentials enumerate their publish subjects, so the svc reach
+		// (OC proxy / svc handlers) must be added explicitly alongside the
+		// plugin's own subjects and _INBOX.>.
+		perm.Pub.Allow.Add("flomorphic.svc.>")
 	}
-	perm.Pub.Allow.Add("flomorphic.svc.>")
 	ucred, err := InfraSpaces.CreateUserCredential(spaceSeed, perm)
 	if err != nil {
 		return "", errors.New("error occurred in create access token")
