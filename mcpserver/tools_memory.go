@@ -154,6 +154,7 @@ func registerMemoryTools(s *server.MCPServer, store repository.Store) {
 		mcp.WithNumber("topK", mcp.Description("number of matches to return")),
 		mcp.WithString("partition", mcp.Description("restrict the search to this partition/tag")),
 		mcp.WithNumber("minScore", mcp.Description("drop matches whose similarity score is below this threshold (0..1); 0 keeps all")),
+		mcp.WithObject("filter", mcp.Description("optional key/value metadata filter: keep only matches whose stored metadata contains every pair")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		id, err := req.RequireString("storeId")
 		if err != nil {
@@ -163,6 +164,10 @@ func registerMemoryTools(s *server.MCPServer, store repository.Store) {
 		if err != nil || strings.TrimSpace(text) == "" {
 			return mcp.NewToolResultError("search text is required"), nil
 		}
+		filter, err := argObject(req, "filter")
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("invalid filter", err), nil
+		}
 		rec, bad := getStore(ctx, id, models.MemoryVector)
 		if bad != nil {
 			return bad, nil
@@ -171,7 +176,7 @@ func registerMemoryTools(s *server.MCPServer, store repository.Store) {
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("embedding failed", err), nil
 		}
-		matches, err := repo.SearchVectors(ctx, rec, vector, req.GetInt("topK", 0), strings.TrimSpace(req.GetString("partition", "")), req.GetFloat("minScore", 0))
+		matches, err := repo.SearchVectors(ctx, rec, vector, req.GetInt("topK", 0), strings.TrimSpace(req.GetString("partition", "")), req.GetFloat("minScore", 0), filter)
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("search failed", err), nil
 		}

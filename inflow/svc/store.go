@@ -161,20 +161,24 @@ func HandleVecStore(store repository.Store, header nats.Header, data []byte) ([]
 	ctx := context.Background()
 	switch action {
 	case "write", "index", "add", "upsert":
-		// The text to embed: an explicit `text`, else a string `input`, else a
-		// `text`/`content` field on the live scoped data. The metadata stored
-		// alongside is the input/scoped object, so a search can return the origin.
+		// The text to embed comes from the node's `text` parameter: a
+		// {{$.path}} placeholder the engine resolves against the flow context
+		// before the call, or literal text. It falls back to a text/content
+		// field on the scoped object, or a scope that resolved to a bare string.
+		// The metadata stored alongside is the node's resolved `meta.<key>` rows
+		// (else the scoped/input object) so a later search can return — and
+		// filter on — the record's fields.
 		scoped := scopedDataMap(body.Data)
-		text := vecIndexText(req, scoped)
+		text := vecIndexText(req, scoped, body.Data)
 		if strings.TrimSpace(text) == "" {
-			return nil, fmt.Errorf("vector store %s: no text to embed (set `text`, a string `input`, or a text/content field)", action)
+			return nil, fmt.Errorf("vector store %s: no text to embed (set the node's `text`, or point the scope at a string / a text/content field)", action)
 		}
 		vector, err := embedOne(ctx, rec.Vector, text)
 		if err != nil {
 			return nil, fmt.Errorf("vector store %s: %w", action, err)
 		}
 		partition := vecPartition(req, scoped)
-		id, err := store.Memory().IndexVector(ctx, rec, text, vector, vecMetadata(req, scoped), partition)
+		id, err := store.Memory().IndexVector(ctx, rec, text, vector, vecWriteMetadata(body, req, scoped), partition)
 		if err != nil {
 			return nil, fmt.Errorf("vector store %s: %w", action, err)
 		}
@@ -189,7 +193,7 @@ func HandleVecStore(store repository.Store, header nats.Header, data []byte) ([]
 		if err != nil {
 			return nil, fmt.Errorf("vector store %s: %w", action, err)
 		}
-		matches, err := store.Memory().SearchVectors(ctx, rec, vector, req.TopK, vecPartition(req, scopedDataMap(body.Data)), req.MinScore)
+		matches, err := store.Memory().SearchVectors(ctx, rec, vector, req.TopK, vecPartition(req, scopedDataMap(body.Data)), req.MinScore, opMetadata(body))
 		if err != nil {
 			return nil, fmt.Errorf("vector store %s: %w", action, err)
 		}
@@ -200,20 +204,30 @@ func HandleVecStore(store repository.Store, header nats.Header, data []byte) ([]
 	}
 }
 
-// vecIndexText picks the text an index request should embed: an explicit `text`,
-// then a string `input`, then a `text`/`content` string field on the live scoped
-// data. Returns "" when none is present so the caller can reject the request.
-func vecIndexText(req storeRequest, scoped map[string]any) string {
+// vecIndexText picks the text an index request should embed. In priority:
+//
+//  1. the node's `text` parameter — a {{$.path}} placeholder the engine
+//     resolves against the flow context before the call, or literal text. This
+//     is the intended input: it lets the scope point at the record object
+//     (kept as metadata) while a separate field selects the string to embed.
+//  2. a `text`/`content` string field on the scoped object (back-compat).
+//  3. the scoped Data itself when the node scope resolved to a bare string
+//     (e.g. scope `$.content.text`), which arrives as `Data`, not a map.
+//
+// Note that `input` is NOT a text source here — for a vector store it is the
+// metadata object (see vecMetadata), mirroring the doc store. Returns "" when
+// none is present so the caller can reject the request.
+func vecIndexText(req storeRequest, scoped map[string]any, rawData any) string {
 	if s := strings.TrimSpace(req.Text); s != "" {
 		return req.Text
-	}
-	if s, ok := req.Input.(string); ok && strings.TrimSpace(s) != "" {
-		return s
 	}
 	for _, k := range []string{"text", "content"} {
 		if s, ok := scoped[k].(string); ok && strings.TrimSpace(s) != "" {
 			return s
 		}
+	}
+	if s, ok := rawData.(string); ok && strings.TrimSpace(s) != "" {
+		return s
 	}
 	return ""
 }
@@ -234,10 +248,47 @@ func vecPartition(req storeRequest, scoped map[string]any) string {
 	return ""
 }
 
-// vecMetadata is the object stored alongside an indexed vector so a later search
-// can return the original record: the node's `input` object when it is one,
-// otherwise the flow's live scoped data.
-func vecMetadata(req storeRequest, scoped map[string]any) map[string]any {
+// MetaOpPrefix marks the flattened metadata entries a store node carries on its
+// `op` payload (see inflow.metaPayloadPrefix, kept in lockstep). Each `meta.<key>`
+// value is a root-level string the engine resolves before the call, so a
+// {{$.path}} placeholder arrives here already replaced with its context value.
+const MetaOpPrefix = "meta."
+
+// opMetadata reassembles the metadata key/value map from the resolved `op`
+// payload: every `meta.<key>` entry, with the prefix stripped and blank values
+// dropped. On a write these are stored on the record; on a read they are the
+// equality filter a search restricts its matches to. Returns nil when the node
+// carries no metadata, so a search stays unfiltered.
+func opMetadata(body inflowModels.ExtSvcRequestBody) map[string]any {
+	out := map[string]any{}
+	for k, v := range body.OperationData {
+		if !strings.HasPrefix(k, MetaOpPrefix) {
+			continue
+		}
+		key := strings.TrimSpace(strings.TrimPrefix(k, MetaOpPrefix))
+		if key == "" {
+			continue
+		}
+		if s, ok := v.(string); ok && strings.TrimSpace(s) == "" {
+			continue
+		}
+		out[key] = v
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// vecWriteMetadata is the object stored alongside an indexed vector so a later
+// search can return — and filter on — the record's fields. The node's explicit
+// metadata rows (resolved `meta.<key>` op entries) are authoritative; absent
+// those it falls back to the node's `input` object, then the live scoped data,
+// so an older node that carried its record via scope/input keeps working.
+func vecWriteMetadata(body inflowModels.ExtSvcRequestBody, req storeRequest, scoped map[string]any) map[string]any {
+	if md := opMetadata(body); len(md) > 0 {
+		return md
+	}
 	if obj, ok := req.Input.(map[string]any); ok && len(obj) > 0 {
 		return obj
 	}

@@ -32,4 +32,5 @@ func Register(api fiber.Router, store repository.Store) {
 	g.Delete("/:id/records/:rid", ctl.deleteRecord)
 	g.Post("/:id/search", ctl.searchVectors)
 	g.Post("/:id/vectors", ctl.indexVector)
+	g.Delete("/:id/vectors/:vid", ctl.deleteVector)
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/FloMorphic/morph-api/models"
@@ -386,11 +387,60 @@ func (r *memoryRepo) IndexVector(ctx context.Context, store *models.MemoryStore,
 	return docID, nil
 }
 
+// DeleteVector removes one indexed record from the store's vec0 index by its
+// document id. doc_id is an unindexed auxiliary column, so vec0 will not let a
+// WHERE clause constrain on it directly — the rowid is resolved with a scan
+// first, then the delete runs by rowid. Returns repository.ErrNotFound when no
+// record carries the id.
+func (r *memoryRepo) DeleteVector(ctx context.Context, store *models.MemoryStore, docID string) error {
+	if store == nil || store.Type != models.MemoryVector {
+		return fmt.Errorf("sqlite: delete requires a vector store")
+	}
+	docID = strings.TrimSpace(docID)
+	if docID == "" {
+		return fmt.Errorf("sqlite: delete requires a docId")
+	}
+	table := vecTableName(store.ID)
+
+	rows, err := r.db.QueryContext(ctx, fmt.Sprintf("SELECT rowid, doc_id FROM %s", table))
+	if err != nil {
+		return fmt.Errorf("sqlite: lookup vector: %w", err)
+	}
+	var (
+		rowID int64
+		found bool
+	)
+	for rows.Next() {
+		var (
+			rid int64
+			did string
+		)
+		if err := rows.Scan(&rid, &did); err != nil {
+			rows.Close()
+			return fmt.Errorf("sqlite: scan vector row: %w", err)
+		}
+		if did == docID {
+			rowID, found = rid, true
+			break
+		}
+	}
+	if cerr := rows.Close(); cerr != nil && err == nil {
+		return fmt.Errorf("sqlite: iterate vectors: %w", cerr)
+	}
+	if !found {
+		return repository.ErrNotFound
+	}
+	if _, err := r.db.ExecContext(ctx, fmt.Sprintf("DELETE FROM %s WHERE rowid = ?", table), rowID); err != nil {
+		return fmt.Errorf("sqlite: delete vector: %w", err)
+	}
+	return nil
+}
+
 // SearchVectors runs a KNN query over the store's vec0 index for the query
 // vector, returning the k nearest matches (nearest first) with their stored
 // text and metadata. The query vector width is validated up front and k is
 // clamped so a caller can never ask for an unbounded scan.
-func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int, partition string, minScore float64) ([]models.VectorMatch, error) {
+func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int, partition string, minScore float64, filter map[string]any) ([]models.VectorMatch, error) {
 	if store == nil || store.Type != models.MemoryVector || store.Vector == nil {
 		return nil, fmt.Errorf("sqlite: search requires a vector store")
 	}
@@ -402,6 +452,14 @@ func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStor
 	}
 	if k > maxVectorSearchK {
 		k = maxVectorSearchK
+	}
+	// A metadata filter is applied in Go after the KNN — sqlite-vec can only
+	// constrain declared metadata/partition columns, and the metadata blob is an
+	// auxiliary column. Over-fetch the neighbourhood so the filter still has k
+	// hits to keep, then trim back to k below.
+	fetchK := k
+	if len(filter) > 0 {
+		fetchK = maxVectorSearchK
 	}
 	blob, err := sqlite_vec.SerializeFloat32(vector)
 	if err != nil {
@@ -428,7 +486,7 @@ func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStor
 		// partition-scoped search can only be empty.
 		return []models.VectorMatch{}, nil
 	}
-	args = append(args, k)
+	args = append(args, fetchK)
 	stmt := fmt.Sprintf(
 		"SELECT doc_id, %s, content, metadata, distance FROM %s WHERE %s ORDER BY distance LIMIT ?",
 		selectCol, table, where,
@@ -461,12 +519,48 @@ func (r *memoryRepo) SearchVectors(ctx context.Context, store *models.MemoryStor
 				m.Metadata = meta
 			}
 		}
+		// Metadata filter: keep only records carrying every requested key/value.
+		if !metadataMatches(m.Metadata, filter) {
+			continue
+		}
 		out = append(out, m)
+		// The over-fetch pulled up to maxVectorSearchK candidates; return no more
+		// than the k the caller asked for once the filter has had its say.
+		if len(out) >= k {
+			break
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlite: iterate vector matches: %w", err)
 	}
 	return out, nil
+}
+
+// metadataMatches reports whether a record's stored metadata satisfies every
+// key/value pair in filter (AND semantics). An empty filter matches everything.
+// Comparison is tolerant of JSON round-trip type drift — a number stored as
+// float64 still matches a filter value that arrived as a string form — so a
+// caller need not know the exact stored type of a field.
+func metadataMatches(meta map[string]any, filter map[string]any) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	for k, want := range filter {
+		got, ok := meta[k]
+		if !ok || !metaValueEqual(got, want) {
+			return false
+		}
+	}
+	return true
+}
+
+// metaValueEqual compares two metadata values with the JSON type-drift tolerance
+// metadataMatches needs: an exact match, or equal string forms (so 42 == "42").
+func metaValueEqual(a, b any) bool {
+	if reflect.DeepEqual(a, b) {
+		return true
+	}
+	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
 }
 
 func (r *memoryRepo) dropVectorIndex(ctx context.Context, id string) error {

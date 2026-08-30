@@ -8,6 +8,7 @@ package inflow
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/FloMorphic/morph-api/models"
@@ -358,9 +359,55 @@ func buildStoreNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData 
 			payload[k] = v
 		}
 	}
+	// A vector node's metadata key/value rows are flattened onto the payload as
+	// individual `meta.<key>` entries rather than a nested `metadata` map. The
+	// engine resolves {{$.path}} placeholders only in root-level string values of
+	// `op`, so each value must sit at the top level to be resolved at run time;
+	// the handler reassembles them into a metadata map (stored on a write,
+	// matched as an equality filter on a read). See buildMetaPayload.
+	for k, v := range storeMetaPayload(nodeData["metadata"]) {
+		payload[k] = v
+	}
 	evNode.ExtrinsicRule.OperationData = payload
 	node.Extrinsic = &evNode.ExtrinsicRule
 	return nil
+}
+
+// metaPayloadPrefix marks the flattened metadata entries a store node carries on
+// its `op` payload. Kept in lockstep with svc.MetaOpPrefix, which reassembles
+// them handler-side after the engine has resolved each value.
+const metaPayloadPrefix = "meta."
+
+// storeMetaPayload flattens a vector node's metadata rows into `meta.<key>`
+// entries for the `op` payload. It accepts the shape the drawer emits — an array
+// of {key, value} rows — as well as a plain object, and drops blank keys. Each
+// value is carried verbatim so a {{$.path}} placeholder survives to be resolved
+// by the engine just before the call.
+func storeMetaPayload(raw any) map[string]any {
+	out := map[string]any{}
+	switch m := raw.(type) {
+	case []any:
+		for _, row := range m {
+			r, ok := row.(map[string]any)
+			if !ok {
+				continue
+			}
+			key := strings.TrimSpace(getStr(r, "key"))
+			if key == "" {
+				continue
+			}
+			out[metaPayloadPrefix+key] = r["value"]
+		}
+	case map[string]any:
+		for k, v := range m {
+			key := strings.TrimSpace(k)
+			if key == "" {
+				continue
+			}
+			out[metaPayloadPrefix+key] = v
+		}
+	}
+	return out
 }
 
 // buildUntilNode lowers a Continue After node to an extrinsic on

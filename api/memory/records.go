@@ -45,12 +45,15 @@ type documentRecord struct {
 }
 
 // vectorSearchRequest is the body of POST /memory/:id/search. An optional
-// `partition` restricts the search to records stored under that partition/tag.
+// `partition` restricts the search to records stored under that partition/tag;
+// an optional `filter` keeps only matches whose stored metadata contains every
+// given key/value pair.
 type vectorSearchRequest struct {
-	Text      string  `json:"text"`
-	TopK      int     `json:"topK"`
-	Partition string  `json:"partition"`
-	MinScore  float64 `json:"minScore"`
+	Text      string         `json:"text"`
+	TopK      int            `json:"topK"`
+	Partition string         `json:"partition"`
+	MinScore  float64        `json:"minScore"`
+	Filter    map[string]any `json:"filter"`
 }
 
 // vectorIndexRequest is the body of POST /memory/:id/vectors: the text to embed
@@ -167,6 +170,19 @@ func (ctl *controller) deleteRecord(c fiber.Ctx) error {
 	return etc.Send(c, fiber.StatusAccepted, fiber.Map{"id": c.Params("rid")}, nil)
 }
 
+// deleteVector handles DELETE /memory/:id/vectors/:vid — removes one indexed
+// record from a vector store by the document id a search returns as `docId`.
+func (ctl *controller) deleteVector(c fiber.Ctx) error {
+	rec, ok := ctl.vecStore(c)
+	if !ok {
+		return nil
+	}
+	if err := ctl.repo.DeleteVector(c.Context(), rec, c.Params("vid")); err != nil {
+		return etc.FailFromRepo(c, err, "vector record not found")
+	}
+	return etc.Send(c, fiber.StatusAccepted, fiber.Map{"id": c.Params("vid")}, nil)
+}
+
 // searchVectors handles POST /memory/:id/search — embeds the query text with the
 // store's captured embedding config and returns the nearest matches.
 func (ctl *controller) searchVectors(c fiber.Ctx) error {
@@ -185,7 +201,7 @@ func (ctl *controller) searchVectors(c fiber.Ctx) error {
 	if err != nil {
 		return etc.Fail(c, fiber.StatusBadGateway, err.Error())
 	}
-	matches, err := ctl.repo.SearchVectors(c.Context(), rec, vector, req.TopK, strings.TrimSpace(req.Partition), req.MinScore)
+	matches, err := ctl.repo.SearchVectors(c.Context(), rec, vector, req.TopK, strings.TrimSpace(req.Partition), req.MinScore, req.Filter)
 	if err != nil {
 		return etc.Fail(c, fiber.StatusInternalServerError, err.Error())
 	}

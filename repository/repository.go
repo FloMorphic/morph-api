@@ -108,8 +108,15 @@ type MemoryRepository interface {
 	// When partition is non-empty the search is restricted to records stored under
 	// that partition key, so the top-k is computed within the partition rather than
 	// across the whole index. minScore, when > 0, drops matches whose similarity
-	// score is below it, so a caller can ask for "near enough" hits only.
-	SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int, partition string, minScore float64) ([]models.VectorMatch, error)
+	// score is below it, so a caller can ask for "near enough" hits only. filter,
+	// when non-empty, keeps only matches whose stored metadata contains every
+	// key/value pair (equality), applied after the KNN so results still come back
+	// nearest-first.
+	SearchVectors(ctx context.Context, store *models.MemoryStore, vector []float32, k int, partition string, minScore float64, filter map[string]any) ([]models.VectorMatch, error)
+	// DeleteVector removes one indexed record from the store's vec0 index by its
+	// document id (the id IndexVector returned and a search echoes back as DocID).
+	// Returns ErrNotFound when no record carries that id.
+	DeleteVector(ctx context.Context, store *models.MemoryStore, docID string) error
 }
 
 // PromptRepository is CRUD for prompt templates (PromptRecord).
