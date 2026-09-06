@@ -32,7 +32,7 @@ func (ctl *controller) pluginCred(c fiber.Ctx) error {
 	if err != nil {
 		return credError(c, err)
 	}
-	dotenv := pluginEnvFile(input.PluginId, cred, nil)
+	dotenv := pluginEnvFile(input.PluginId, cred, input.Env)
 	return etc.OK(c, fiber.Map{"env": dotenv, "cred": cred})
 }
 

@@ -257,4 +257,9 @@ type CredRequest struct {
 	Name     string         `json:"name"`
 	Access   AccessCredType `json:"access"`
 	SpaceId  string         `json:"spaceId"`
+	// Env are extra plugin-specific variables (upstream keys, endpoints, mode
+	// flags) rendered into the generated env file alongside the minted
+	// credential. Optional — the three reserved keys are always emitted, and a
+	// declared extra never clobbers them (see pluginEnvFile).
+	Env []EnvVar `json:"env"`
 }
