@@ -45,3 +45,10 @@ DELETE FROM extensions WHERE id = @id;
 -- rather than merges, so a method the plugin dropped disappears with it.
 -- name: DeletePluginActions :execrows
 DELETE FROM extensions WHERE plugin_id = @plugin_id AND action <> '';
+
+-- Every palette row derived from one plugin's @actions, oldest first so a sync
+-- that has to pick between two rows claiming the same identity keeps the one the
+-- workflows have had longest.
+-- name: ListPluginActions :many
+SELECT * FROM extensions WHERE plugin_id = @plugin_id AND action <> ''
+ORDER BY created_at ASC, id ASC;

@@ -142,11 +142,15 @@ type FormBuilder struct {
 	Jsonschema string `json:"jsonschema"`
 }
 
-// SyncResult reports what a sync did to a plugin's palette rows.
+// SyncResult reports what a sync did to a plugin's palette rows: Added counts
+// the actions that had no row yet, Updated the ones that matched a row and
+// rewrote it in place (keeping its id, so saved workflows still resolve), and
+// Removed the leftover rows for methods the plugin no longer exposes.
 type SyncResult struct {
 	Intro    PluginIntro    `json:"intro"`
 	Actions  []PluginAction `json:"actions"`
 	Added    int            `json:"added"`
+	Updated  int            `json:"updated"`
 	Removed  int            `json:"removed"`
 	PluginID string         `json:"pluginId"`
 }

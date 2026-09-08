@@ -95,6 +95,25 @@ func (r *extensionRepo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// ListPluginActions returns the palette rows synced from one plugin's actions,
+// oldest first. Zero rows is not an error — a plugin that has never been synced
+// simply has none.
+func (r *extensionRepo) ListPluginActions(ctx context.Context, pluginID string) ([]models.ExtensionRecord, error) {
+	rows, err := r.q.ListPluginActions(ctx, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]models.ExtensionRecord, 0, len(rows))
+	for _, row := range rows {
+		rec, err := extensionFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *rec)
+	}
+	return items, nil
+}
+
 // DeletePluginActions drops the palette rows derived from one plugin's actions,
 // keeping the plugin's own registration row. Zero deleted is not an error — a
 // plugin that has never been synced simply has none.

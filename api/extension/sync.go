@@ -19,11 +19,16 @@ import (
 // do, and it can be redeployed with a method added or dropped at any time.
 //
 // Sync is the one place that copies any of it into the database, and it does so
-// as a *replacement*: every derived row for the plugin is deleted, then one row
-// per live action is written. That is what makes a removed method disappear from
-// the palette instead of lingering as a node that no longer resolves. The
-// plugin's own registration row is never touched — it is the user's, not the
-// plugin's.
+// by *reconciling*: a live action that already has a row keeps that row — same
+// id, rewritten from the descriptor — and only an action with no row at all
+// gets a new one. Rows left over, whose method and title the plugin no longer
+// mentions, are deleted, which is what makes a removed method disappear from the
+// palette instead of lingering as a node that no longer resolves.
+//
+// Reusing the row rather than replacing it matters because the id is what a
+// saved workflow stores: deleting and re-inserting would hand every node on the
+// canvas a stale reference after a routine re-sync. The plugin's own
+// registration row is never touched — it is the user's, not the plugin's.
 //
 // The settings form from `@intro` is deliberately NOT stored. It is the shape of
 // a settings profile, and profiles live under `/settings` keyed by plugin id;
@@ -68,31 +73,112 @@ func (ctl *controller) syncActions(c fiber.Ctx) error {
 		_ = json.Unmarshal(introRaw, &intro)
 	}
 
-	removed, err := ctl.repo.DeletePluginActions(c.Context(), pluginID)
+	existing, err := ctl.repo.ListPluginActions(c.Context(), pluginID)
 	if err != nil {
 		return etc.FailFromRepo(c, err, "extension not found")
 	}
+	index := newActionIndex(existing)
 
-	added := 0
+	added, updated := 0, 0
 	for _, act := range actions {
 		method := strings.TrimSpace(act.Method)
 		if method == "" {
 			continue // a nameless action has no subject to call; skip it
 		}
 		row := actionRow(rec, act, method)
+		if match := index.claim(method, row.Name); match != nil {
+			row.ID = match.ID // rewrite the row the workflows already point at
+			updated++
+		} else {
+			added++
+		}
 		if err := ctl.repo.Upsert(c.Context(), &row); err != nil {
 			return etc.FailFromRepo(c, err, "extension not found")
 		}
-		added++
+	}
+
+	// Whatever no live action claimed is a method the plugin dropped.
+	removed := 0
+	for _, stale := range index.unclaimed() {
+		if err := ctl.repo.Delete(c.Context(), stale.ID); err != nil {
+			return etc.FailFromRepo(c, err, "extension not found")
+		}
+		removed++
 	}
 
 	return etc.OK(c, models.SyncResult{
 		Intro:    intro,
 		Actions:  actions,
 		Added:    added,
+		Updated:  updated,
 		Removed:  removed,
 		PluginID: pluginID,
 	})
+}
+
+// actionIndex matches the rows a plugin already has against the actions it now
+// reports, so a sync updates in place instead of churning ids.
+//
+// Two keys, tried in that order: the method, which is the action's true identity
+// and survives a retitling, and then the exact name, which catches an action
+// whose method was renamed but which is still the same node to the user. Each
+// row can be claimed once — the first action to match it takes it, and a second
+// action naming the same row is treated as new rather than fighting over it.
+type actionIndex struct {
+	rows     []models.ExtensionRecord
+	byMethod map[string]int
+	byName   map[string]int
+	claimed  map[int]bool
+}
+
+func newActionIndex(rows []models.ExtensionRecord) *actionIndex {
+	idx := &actionIndex{
+		rows:     rows,
+		byMethod: make(map[string]int, len(rows)),
+		byName:   make(map[string]int, len(rows)),
+		claimed:  make(map[int]bool, len(rows)),
+	}
+	// Rows arrive oldest first, so the earliest row wins a duplicated key: it is
+	// the one the canvas has had longest.
+	for i, row := range rows {
+		if key := strings.TrimSpace(row.Action); key != "" {
+			if _, dup := idx.byMethod[key]; !dup {
+				idx.byMethod[key] = i
+			}
+		}
+		if key := strings.TrimSpace(row.Name); key != "" {
+			if _, dup := idx.byName[key]; !dup {
+				idx.byName[key] = i
+			}
+		}
+	}
+	return idx
+}
+
+// claim returns the row this action should overwrite, marking it taken, or nil
+// when the action has no row yet.
+func (idx *actionIndex) claim(method, name string) *models.ExtensionRecord {
+	if i, ok := idx.byMethod[strings.TrimSpace(method)]; ok && !idx.claimed[i] {
+		idx.claimed[i] = true
+		return &idx.rows[i]
+	}
+	if i, ok := idx.byName[strings.TrimSpace(name)]; ok && !idx.claimed[i] {
+		idx.claimed[i] = true
+		return &idx.rows[i]
+	}
+	return nil
+}
+
+// unclaimed is every row no live action matched — the methods the plugin no
+// longer exposes.
+func (idx *actionIndex) unclaimed() []models.ExtensionRecord {
+	var out []models.ExtensionRecord
+	for i := range idx.rows {
+		if !idx.claimed[i] {
+			out = append(out, idx.rows[i])
+		}
+	}
+	return out
 }
 
 // actionRow builds the palette row for one action of a plugin. It carries the

@@ -201,11 +201,15 @@ type ExtensionRepository interface {
 	// (matched by name). It never overwrites an existing builtin, so admin edits
 	// survive restarts. Returns the number of rows inserted.
 	SeedBuiltins(ctx context.Context, defs []models.ExtensionRecord) (int, error)
+	// ListPluginActions returns the palette rows derived from one plugin's
+	// `@actions` (those with a non-empty Action), oldest first. Sync reconciles
+	// against this set so a row that still matches a live action is updated in
+	// place instead of being replaced by a new one.
+	ListPluginActions(ctx context.Context, pluginID string) ([]models.ExtensionRecord, error)
 	// DeletePluginActions drops the palette rows derived from one plugin's
 	// `@actions` (those with a non-empty Action), keeping the plugin's own
-	// registration row. The sync pass replaces derived rows wholesale, so a
-	// method the plugin no longer exposes leaves the palette with it. Returns
-	// the number of rows removed.
+	// registration row — what removing the plugin itself needs. Returns the
+	// number of rows removed.
 	DeletePluginActions(ctx context.Context, pluginID string) (int, error)
 }
 

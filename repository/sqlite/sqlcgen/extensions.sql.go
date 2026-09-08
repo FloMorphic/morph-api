@@ -167,6 +167,53 @@ func (q *Queries) ListExtensions(ctx context.Context, arg ListExtensionsParams) 
 	return items, nil
 }
 
+const listPluginActions = `-- name: ListPluginActions :many
+SELECT id, kind, type, name, description, plugin_id, icon, params, bind_to, install, "action", parent_id, outbound, created_at, updated_at FROM extensions WHERE plugin_id = ?1 AND action <> ''
+ORDER BY created_at ASC, id ASC
+`
+
+// Every palette row derived from one plugin's @actions, oldest first so a sync
+// that has to pick between two rows claiming the same identity keeps the one the
+// workflows have had longest.
+func (q *Queries) ListPluginActions(ctx context.Context, pluginID string) ([]Extension, error) {
+	rows, err := q.db.QueryContext(ctx, listPluginActions, pluginID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Extension{}
+	for rows.Next() {
+		var i Extension
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.Type,
+			&i.Name,
+			&i.Description,
+			&i.PluginID,
+			&i.Icon,
+			&i.Params,
+			&i.BindTo,
+			&i.Install,
+			&i.Action,
+			&i.ParentID,
+			&i.Outbound,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertExtension = `-- name: UpsertExtension :exec
 INSERT INTO extensions (
     id, kind, type, name, description, plugin_id, icon, params, bind_to, install, action, parent_id, outbound, created_at, updated_at

@@ -56,9 +56,10 @@ func TestActionRow(t *testing.T) {
 	if row.Parameters.UI["summary"] == nil {
 		t.Errorf("ui schema not parsed: %+v", row.Parameters.UI)
 	}
-	// A row never carries an id: it is a fresh insert on every sync.
+	// A freshly built row carries no id; sync fills in the id of the row this
+	// action already had, and leaves it empty only for an action that is new.
 	if row.ID != "" {
-		t.Errorf("id = %q, want empty so the repo issues one", row.ID)
+		t.Errorf("id = %q, want empty so sync decides reuse-or-insert", row.ID)
 	}
 	// Declared outbound ports are carried through verbatim for the canvas to
 	// render one port per entry.
@@ -103,5 +104,60 @@ func TestFormParametersToleratesGarbage(t *testing.T) {
 	}
 	if len(got.Schema) != 0 || len(got.UI) != 0 {
 		t.Errorf("got %+v, want empty objects", got)
+	}
+}
+
+// The point of the index: a re-sync of a plugin that still exposes the same
+// action must land on the row that action already has, so the id a saved
+// workflow stores keeps resolving.
+func TestActionIndexMatchesExistingRow(t *testing.T) {
+	rows := []models.ExtensionRecord{
+		{ID: "ext_add", Name: "Add task", Action: "add_task"},
+		{ID: "ext_close", Name: "Close task", Action: "close_task"},
+	}
+	idx := newActionIndex(rows)
+
+	// Same method, retitled by the plugin: still the same row.
+	if got := idx.claim("add_task", "Create task"); got == nil || got.ID != "ext_add" {
+		t.Errorf("claim(add_task) = %+v, want ext_add", got)
+	}
+	// Method renamed, same title: matched on the name instead.
+	if got := idx.claim("archive_task", "Close task"); got == nil || got.ID != "ext_close" {
+		t.Errorf("claim by name = %+v, want ext_close", got)
+	}
+	// Nothing left to match, so a genuinely new action is an insert.
+	if got := idx.claim("assign_task", "Assign task"); got != nil {
+		t.Errorf("claim for a new action = %+v, want nil", got)
+	}
+	if left := idx.unclaimed(); len(left) != 0 {
+		t.Errorf("unclaimed = %+v, want none", left)
+	}
+}
+
+// A row is claimed once. Two actions that both point at it must not both
+// overwrite it — the second is a new node, and the first keeps the row.
+func TestActionIndexClaimsEachRowOnce(t *testing.T) {
+	idx := newActionIndex([]models.ExtensionRecord{{ID: "ext_add", Name: "Add task", Action: "add_task"}})
+
+	if got := idx.claim("add_task", "Add task"); got == nil || got.ID != "ext_add" {
+		t.Fatalf("first claim = %+v, want ext_add", got)
+	}
+	if got := idx.claim("add_task_v2", "Add task"); got != nil {
+		t.Errorf("second claim on the same row = %+v, want nil", got)
+	}
+}
+
+// A method the plugin dropped leaves its row unclaimed — that is the set sync
+// deletes, and the only thing it deletes.
+func TestActionIndexReportsDroppedRows(t *testing.T) {
+	idx := newActionIndex([]models.ExtensionRecord{
+		{ID: "ext_add", Name: "Add task", Action: "add_task"},
+		{ID: "ext_gone", Name: "Old task", Action: "old_task"},
+	})
+	idx.claim("add_task", "Add task")
+
+	left := idx.unclaimed()
+	if len(left) != 1 || left[0].ID != "ext_gone" {
+		t.Errorf("unclaimed = %+v, want just ext_gone", left)
 	}
 }

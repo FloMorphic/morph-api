@@ -58,6 +58,10 @@ type Querier interface {
 	ListHumanTasks(ctx context.Context, arg ListHumanTasksParams) ([]HumanTask, error)
 	ListMemoryStores(ctx context.Context) ([]MemoryStore, error)
 	ListNodeSettings(ctx context.Context, arg ListNodeSettingsParams) ([]NodeSetting, error)
+	// Every palette row derived from one plugin's @actions, oldest first so a sync
+	// that has to pick between two rows claiming the same identity keeps the one the
+	// workflows have had longest.
+	ListPluginActions(ctx context.Context, pluginID string) ([]Extension, error)
 	ListProcesses(ctx context.Context, arg ListProcessesParams) ([]Process, error)
 	ListPrompts(ctx context.Context, arg ListPromptsParams) ([]Prompt, error)
 	ListTriggers(ctx context.Context, arg ListTriggersParams) ([]Trigger, error)
