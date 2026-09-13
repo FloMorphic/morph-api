@@ -57,7 +57,7 @@ func TestPlanPatch_ScopedEnrichThenRoute(t *testing.T) {
 				Ref: "route", Kind: "rule", Title: "Route", Scope: "$",
 				Data: map[string]any{
 					"lang":       "js",
-					"logic_rule": "let d = { pass: true }\nd",
+					"logic_rule": "let d = input.severity === 'high' ? 'escalate' : 'close'\nd",
 					"handlers": []any{
 						map[string]any{"name": "escalate", "title": "Escalate"},
 						map[string]any{"name": "close", "title": "Close"},
@@ -226,7 +226,7 @@ func TestPlanPatch_LoopBackEdgeNotFlaggedAsConvergence(t *testing.T) {
 			{Ref: "init", Kind: "js", Title: "Init i", Scope: "$", Key: "i",
 				Data: map[string]any{"lang": "js", "logic_rule": "let i = 0\ni"}},
 			{Ref: "guard", Kind: "rule", Title: "More items?", Scope: "$",
-				Data: map[string]any{"lang": "js", "logic_rule": "let d = {}\nd",
+				Data: map[string]any{"lang": "js", "logic_rule": "let d = input.i < input.items.length ? 'next' : 'done'\nd",
 					"handlers": []any{
 						map[string]any{"name": "next"},
 						map[string]any{"name": "done"},

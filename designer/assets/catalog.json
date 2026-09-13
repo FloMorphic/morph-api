@@ -52,11 +52,13 @@
     "tagline": "Branch on a contract",
     "description": "Evaluate a rule (JavaScript or OPA/Rego) over the scoped context and route through matching handlers. The scoped slice arrives as `input`; in JavaScript the LAST EXPRESSION is the decision (not a `return`), in Rego it is the variable named by the result variable. Compiles to a Contract; each handler is an output port for a routed branch.",
     "primitives": "Contract",
-    "dataFields": { "lang": "js", "logic_rule": "let scopedData = input // the slice selected by `scope`\n\nlet decision = { pass: true }\n\ndecision // last expression — this is the routed decision\n", "opa_result": "", "conditions": [], "handlers": [] },
+    "dataFields": { "lang": "js", "logic_rule": "let scopedData = input // the slice selected by `scope`\n\n// Return the NAME of the handler to fire, as a string — decide on every path.\nlet decision = scopedData.ok ? 'approved' : 'rejected'\n\ndecision // last expression — this is the routed decision\n", "opa_result": "", "conditions": [], "handlers": [] },
     "notes": [
       "Handlers are `{ \"id\": \"h1\", \"name\": \"approved\", \"title\": \"Approved\" }`; each is a routed branch.",
       "`name` is the branch's route tag — the decision has to fire it and the edge leaving that port carries it — while `title` only labels the port on the canvas.",
-      "`logic_rule` is JS returning a value (`lang: \"js\"`) or Rego (`lang: \"opa\"`)."
+      "`logic_rule` is JS (`lang: \"js\"`) whose last expression is the decision, or Rego (`lang: \"opa\"`) where `opa_result` names the variable holding it.",
+      "The decision MUST be one string equal to a handler `name` (or an array of handler names to fire several ports at once). Anything else — an unknown string, `''`, `null`, `undefined`, an object such as `{ pass: true }` — fires no handler, which prunes every outgoing edge and ends that branch silently: no error, no log line.",
+      "Make the decision exhaustive over the handlers: `let decision = ok ? 'approved' : 'rejected'`, never `let decision; if (ok) { decision = 'approved' }` — the else path returns `undefined` and is a dead port that looks fine on the canvas."
     ]
   },
   {
