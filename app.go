@@ -11,6 +11,7 @@ import (
 	// Register the sqlite repository driver (side-effecting init).
 	_ "github.com/FloMorphic/morph-api/repository/sqlite"
 
+	fuse "github.com/Inflowenger/inflow-fusion/inflow"
 	"github.com/bytedance/sonic"
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
@@ -89,6 +90,14 @@ func connectInflowWithRetry(ctx context.Context, store repository.Store) {
 	}
 	fmt.Println("inflow runtime connected")
 
+	// The SDK's startup reload probed infra's engine list exactly once, just now.
+	// On that same host reboot the fractal is usually still registering (or
+	// crash-looping on a NATS that is not up yet), so the probe finds nothing and
+	// the pool stays empty for the process's lifetime — "no resource" on every
+	// run until the container is restarted or the engine is added by hand. Keep
+	// looking in the background until something reachable is registered.
+	go reloadResourcesWithRetry(ctx)
+
 	if err := inflow.LoadSvcNodehandlers(store); err != nil {
 		fmt.Printf("warning: inflow service handlers not loaded: %v\n", err)
 		return
@@ -110,4 +119,49 @@ func connectInflowWithRetry(ctx context.Context, store repository.Store) {
 	// starts a fresh run each time one comes due. Distinct from the process
 	// scheduler above (which resumes one-shot parked runs).
 	inflow.StartTriggerScheduler(ctx, store)
+}
+
+// reloadResourcesWithRetry re-reads infra's engine list, with the same capped
+// backoff as the connection above, until the dispatch pool holds at least one
+// reachable resource. Each tick goes through ReloadResourcesIfEmpty, which
+// fills the pool only if it is still empty: a resource an operator adds by
+// hand while a tick is in flight is kept, and ends the loop. On a platform with
+// no engine at all this is one cheap GET every maxDelay — the price of picking
+// the engine up whenever it does appear, without anyone restarting the API.
+func reloadResourcesWithRetry(ctx context.Context) {
+	const (
+		firstDelay = 2 * time.Second
+		maxDelay   = 30 * time.Second
+	)
+	delay := firstDelay
+	for attempt := 1; ; attempt++ {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		backend := fuse.GetInflowBackend()
+		if backend == nil {
+			return
+		}
+		filled, reachable, registered, err := backend.ReloadResourcesIfEmpty(100)
+		switch {
+		case err != nil:
+			fmt.Printf("warning: inflow resource pool still empty (attempt %d): %v — retrying in %s\n", attempt, err, delay)
+		case filled:
+			fmt.Printf("inflow resource pool loaded on attempt %d: %d of %d registered resource(s) reachable\n", attempt, reachable, registered)
+			return
+		case fuse.HasLiveResources():
+			// Filled by someone else meanwhile (a hand-added resource, an explicit
+			// reload) — nothing left to wait for.
+			return
+		default:
+			fmt.Printf("warning: inflow resource pool still empty (attempt %d): none of %d registered resource(s) reachable — retrying in %s\n", attempt, registered, delay)
+		}
+		if delay < maxDelay {
+			if delay *= 2; delay > maxDelay {
+				delay = maxDelay
+			}
+		}
+	}
 }
