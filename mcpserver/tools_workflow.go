@@ -2,55 +2,39 @@ package mcpserver
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/FloMorphic/morph-api/api/wslog"
+	"github.com/FloMorphic/morph-api/flowfile"
 	"github.com/FloMorphic/morph-api/inflow"
-	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
-	compiler "github.com/Inflowenger/inflow-fusion/compilers/vueFlow"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// nodeDataGuide documents, for the authoring tools, the type-specific fields
-// each node's `data` object carries beyond the shared title/key/scope — the
-// contract the compiler's buildXxx hooks read (see inflow/node_builders.go). The
-// param form of every builtin (and a plugin action's live @form) is also
-// available through flo_list_extensions / flo_get_extension, which is the
-// authoritative per-node schema; this is the quick reference.
-const nodeDataGuide = `Every node.data has: title (required), and optional key (binds the node's output into context as $.<key>) and scope.
-One node MUST be type "startNode". Node types and their extra data fields:
-- startNode / promissall / void: none (promissall is a fan-in join; wire every branch into it)
-- llm:      provider, model, settingsId, messages/prompt config
-- mcp:      url, transport, auth, tool, arguments (MCP client node)
-- http:     method, url, headers, body
-- cast:     body (map of field->value/expression)
-- rule / contract: lang ("cel"|"opa"), logic_rule, opa_result
-- js / opa: lang ("js"|"opa"), logic_rule, opa_result
-- hitl:     mode ("park"|"continue"), channel, prompt, settingsId, key
-- docstore / vecstore: action, storeId, and the action's fields
-- until:    the schedule/continue config
-- plugin:   the imported plugin action's fields (from its @form)
-- goto:     goto {flowId, nodeId}
-Edges wire nodes: {id, source, target, sourceHandle?, targetHandle?, data:{tags:[]}}. Branch routing uses data.tags.
-
-Scope vs branching (the mistake to avoid):
-- A node's "scope" is a JSONPath. A scope selecting MANY values ("$.issues[*]", a filter query) runs the node ONCE PER ELEMENT, but those passes are a QUEUE INSIDE the one node — sequential, on the same node, not parallel. Nothing on the graph forks: the node's outgoing edges are followed ONCE, after every pass finishes. Scope cardinality is NEVER branching.
-- Branching has exactly ONE source: a node with several outgoing EDGES. A "promissall" (wait-for-all) only merges REAL branches — two or more edges wired into it. Putting a promissall after a single scoped node is a no-op: only one edge arrives, so there is nothing to wait for.
-- A node whose output ports are DERIVED from its result — "llm" with bound functions, "rule" with handlers, a "plugin" action with outbound ports (all the same primitive underneath) — routes for the WHOLE node, so it MUST carry a single-valued scope (usually "$"). Never give such a node a wildcard/filter scope: the runtime stops at the first element that picks a branch and skips (and warns about) the rest.
-- To do per-element work AND then decide, use TWO nodes: a per-element node on "$.issues[*]" (llm WITHOUT functions, js, http, cast…) writing its result under each element via "key", then a decision node on "$" that reads what accumulated and routes once.
-
-Context refs in TEXT fields (a prompt, an http url/body, a cast value): "{{$.path}}" is a FIXED address in the whole Context; "{{$this}}" (and "{{$this.field}}") is wherever THIS pass is scoped. On a many-scope node these differ and it matters: with scope "$.issues[*]" the prompt must read "{{$this.title}}" / "{{$this.description}}" for the current issue — "{{$.title}}" reads a top-level $.title that is not there, and "{{$.issues[0].title}}" reads the FIRST issue on every pass (almost always a bug). Use "$this" for the scoped element, "$.path" only for a fixed Context address. (Never put "{{…}}" in code — js/opa/rule logic reads the scoped slice off "input"; templating is text-fields only.)
-
-Use flo_list_extensions for the exact param form of each node type, and flo_compile_workflow to validate a draft before saving.`
+// documentGuide names the shape flo_import_workflow takes and flo_export_workflow
+// returns — the portable workflow document (package flowfile). It is the same
+// graph patch flo_plan_patch / flo_apply_patch author, under a small header, so
+// the full design guidance is flo_get_design_guide; this only names the shape.
+const documentGuide = `The portable workflow document is the file the editor's Export writes and the flow-cookbook ships — a designer GRAPH PATCH under a small header:
+{
+  "flomorphic": {"kind": "workflow", "version": 1},   // optional header
+  "title": "…",
+  "plugins": [{"name", "actions": ["ns.method", …], "repo"?, "ref"?, "subdir"?}],  // optional: the imported plugins the flow depends on, keyed by action names
+  "nodes": [{ref, kind, title, key?, scope?, position?, data?}],   // one node MUST be kind "startNode"
+  "edges": [{from, to, port?}]                                      // refs, and a port name where the source has derived ports
+}
+It carries NO install-local identity: no canvas ids, no extensionId / pluginId (a per-install address), no plugin form/outbound, no resolved settings (secrets). A plugin node is identified by its "action" method alone; import re-stamps this install's identity from its own extension table and reports the actions no local plugin provides as "missingActions" (the node is kept and flagged, not dropped). Any object with a "nodes" array is accepted, header or not — so a bare patch is a valid document.
+This is about half the size of the saved FlowRecord (which carries Vue-Flow render state) and is the form to read, edit and re-import a flow in. Call flo_get_design_guide before authoring one from scratch.`
 
 // registerWorkflowTools exposes the /flow surface: read (list, get with an
-// optional compile pass) and authoring (compile a candidate graph to validate
-// it, then upsert). A workflow is a Vue-Flow graph (nodes + edges); the tools
-// reuse the same compiler and upsert the visual editor does, so an MCP-authored
-// flow is identical to a hand-drawn one.
+// optional compile pass) and the portable-document road in and out (import /
+// export). Authoring goes through the designer tools (flo_plan_patch /
+// flo_apply_patch) or an import; both land through the same planner, identity
+// stamping and upsert the editor uses, so an MCP-landed flow is identical to a
+// hand-drawn one.
 func registerWorkflowTools(s *server.MCPServer, store repository.Store) {
 	repo := store.Workflows()
 
@@ -67,7 +51,7 @@ func registerWorkflowTools(s *server.MCPServer, store repository.Store) {
 	})
 
 	s.AddTool(mcp.NewTool("flo_get_workflow",
-		mcp.WithDescription("Get one workflow by id. Set compile=true to also return the lowered inflow node graph (what the flow compiles to on the engine)."),
+		mcp.WithDescription("Get one workflow by id as the saved FlowRecord (the raw Vue-Flow graph the editor renders — verbose). To READ or EDIT a flow's design prefer flo_export_workflow, which returns the compact portable document. Set compile=true to also return the lowered inflow node graph (what the flow compiles to on the engine)."),
 		mcp.WithString("id", mcp.Required(), mcp.Description("workflow id (flow_…)")),
 		mcp.WithBoolean("compile", mcp.Description("also return the compiled node graph")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -89,98 +73,71 @@ func registerWorkflowTools(s *server.MCPServer, store repository.Store) {
 		return jsonResult(map[string]any{"flow": rec, "startNodeId": startNodeID, "nodes": nodes})
 	})
 
-	s.AddTool(mcp.NewTool("flo_compile_workflow",
-		mcp.WithDescription("Validate a CANDIDATE (unsaved) workflow graph by running the inflow compiler over it. Returns the lowered node graph on success, or the compile error, without saving anything. Use it to check a draft before flo_upsert_workflow.\n\n"+nodeDataGuide),
-		mcp.WithString("title", mcp.Description("optional title (not required to compile)")),
-		mcp.WithArray("nodes", mcp.Required(), mcp.Description("Vue-Flow nodes: [{id, type, data:{title, key?, ...}, position?:{x,y}}]"),
-			mcp.Items(map[string]any{"type": "object"})),
-		mcp.WithArray("edges", mcp.Description("Vue-Flow edges: [{id?, source, target, sourceHandle?, targetHandle?, data:{tags:[]}}]"),
-			mcp.Items(map[string]any{"type": "object"})),
+	s.AddTool(mcp.NewTool("flo_export_workflow",
+		mcp.WithDescription("Export a saved workflow as the portable workflow document — the readable, compact form (a designer graph patch under a small header) with all install-local identity stripped. This is the form to read a flow's design in, to edit and hand back to flo_import_workflow, or to save as a file / ship in a package.\n\n"+documentGuide),
+		mcp.WithString("id", mcp.Required(), mcp.Description("workflow id (flow_…)")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rec, bad := parseFlowInput(req)
-		if bad != nil {
-			return bad, nil
-		}
-		startNodeID, nodes, err := inflow.FLowCompiler(*rec)
+		id, err := req.RequireString("id")
 		if err != nil {
-			return jsonResult(map[string]any{"ok": false, "error": err.Error()})
+			return mcp.NewToolResultErrorFromErr("id is required", err), nil
 		}
-		return jsonResult(map[string]any{"ok": true, "startNodeId": startNodeID, "nodes": nodes})
-	})
-
-	s.AddTool(mcp.NewTool("flo_upsert_workflow",
-		mcp.WithDescription("Create (empty id) or update a workflow from a Vue-Flow graph — the same save the visual editor performs. Saving does not require the graph to compile (compile separately with flo_compile_workflow); it only checks the graph is structurally sound (node ids, one startNode, each node has a data.title).\n\n"+nodeDataGuide),
-		mcp.WithString("id", mcp.Description("workflow id; empty creates a new one")),
-		mcp.WithString("title", mcp.Required(), mcp.Description("workflow title")),
-		mcp.WithArray("nodes", mcp.Required(), mcp.Description("Vue-Flow nodes: [{id, type, data:{title, key?, ...}, position?:{x,y}}]"),
-			mcp.Items(map[string]any{"type": "object"})),
-		mcp.WithArray("edges", mcp.Description("Vue-Flow edges: [{id?, source, target, sourceHandle?, targetHandle?, data:{tags:[]}}]"),
-			mcp.Items(map[string]any{"type": "object"})),
-	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		rec, bad := parseFlowInput(req)
-		if bad != nil {
-			return bad, nil
-		}
-		if strings.TrimSpace(rec.Title) == "" {
-			return mcp.NewToolResultError("title is required"), nil
-		}
-		// Shared with the REST /flow upsert: fill headless-author graph defaults so
-		// an MCP-built flow renders in the editor, using the one authoritative
-		// normalizer (no drift from the web app's own save path).
-		inflow.NormalizeGraph(rec)
-		if err := repo.Upsert(ctx, rec); err != nil {
+		rec, err := repo.GetByID(ctx, id)
+		if err != nil {
 			return repoError(err, "workflow not found")
 		}
-		// Live sync: an open editor refetches on this event (see api/wslog).
-		wslog.Emit("flow.changed", map[string]any{"id": rec.ID, "source": "mcp"})
-		return jsonResult(rec)
+		return jsonResult(flowfile.Export(ctx, store, *rec))
+	})
+
+	s.AddTool(mcp.NewTool("flo_import_workflow",
+		mcp.WithDescription("Import a portable workflow document as a workflow on this install — the same road as the editor's Import dialog and the REST POST /flow/import. Plugin nodes are re-stamped with this install's extension identity by their action; actions no local plugin provides are kept, flagged, and listed in missingActions so you can tell the operator what to install. The graph is compile-checked (compileError is reported, not a gate — a plugin's account resolves live) and saved unless dryRun. Use dryRun=true to validate a document without saving.\n\n"+documentGuide),
+		mcp.WithObject("workflow", mcp.Required(), mcp.Description("the workflow document: {flomorphic?, title?, plugins?, nodes[], edges[]}")),
+		mcp.WithString("id", mcp.Description("workflow id to overwrite (a re-install); empty creates a new one")),
+		mcp.WithString("title", mcp.Description("overrides the document's own title")),
+		mcp.WithBoolean("dryRun", mcp.Description("plan, stamp and compile-check without saving")),
+	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var in struct {
+			Workflow json.RawMessage `json:"workflow"`
+			ID       string          `json:"id"`
+			Title    string          `json:"title"`
+			DryRun   bool            `json:"dryRun"`
+		}
+		if err := req.BindArguments(&in); err != nil {
+			return mcp.NewToolResultErrorFromErr("invalid import payload", err), nil
+		}
+		doc, err := flowfile.Parse(in.Workflow)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		res, bad := importDocument(ctx, store, flowfile.Input{Doc: doc, ID: in.ID, Title: in.Title, DryRun: in.DryRun})
+		if bad != nil {
+			return bad, nil
+		}
+		return jsonResult(map[string]any{
+			"ok":             true,
+			"flow":           res.Flow,
+			"problems":       res.Problems,
+			"missingActions": res.MissingActions,
+			"compileError":   res.CompileError,
+			"dryRun":         res.DryRun,
+		})
 	})
 }
 
-// parseFlowInput reads the {id?, title, nodes[], edges[]} authoring arguments
-// into a FlowRecord and runs the light structural checks the compiler assumes
-// (it reads node.data["title"] as a bare string and needs a startNode). On
-// failure it returns a ready tool-error result. It does NOT compile — that is
-// flo_compile_workflow's job — so a partial draft can still be saved, matching
-// the visual editor where save and compile are separate.
-func parseFlowInput(req mcp.CallToolRequest) (*models.FlowRecord, *mcp.CallToolResult) {
-	var in struct {
-		ID    string                 `json:"id"`
-		Title string                 `json:"title"`
-		Nodes []compiler.VueFlowNode `json:"nodes"`
-		Edges []compiler.Edges       `json:"edges"`
-	}
-	if err := req.BindArguments(&in); err != nil {
-		return nil, mcp.NewToolResultErrorFromErr("invalid workflow payload", err)
-	}
-	if len(in.Nodes) == 0 {
-		return nil, mcp.NewToolResultError("a workflow needs at least one node")
-	}
-	starts := 0
-	for i, n := range in.Nodes {
-		if strings.TrimSpace(n.ID) == "" {
-			return nil, mcp.NewToolResultError(fmt.Sprintf("node %d is missing an id", i))
+// importDocument runs flowfile.Import for a tool and turns its failures into
+// ready tool-error results, emitting the live-sync event on a real save (an
+// open editor refetches on it — see api/wslog). Shared by flo_import_workflow
+// and the designer's flo_plan_patch / flo_apply_patch.
+func importDocument(ctx context.Context, store repository.Store, in flowfile.Input) (*flowfile.Result, *mcp.CallToolResult) {
+	res, err := flowfile.Import(ctx, store, in)
+	if err != nil {
+		if errors.Is(err, flowfile.ErrInvalid) {
+			return nil, mcp.NewToolResultError(strings.TrimPrefix(err.Error(), flowfile.ErrInvalid.Error()+": "))
 		}
-		if strings.TrimSpace(n.Type) == "" {
-			return nil, mcp.NewToolResultError(fmt.Sprintf("node %q is missing a type", n.ID))
-		}
-		data, ok := n.Data.(map[string]any)
-		if !ok {
-			return nil, mcp.NewToolResultError(fmt.Sprintf("node %q data must be an object with a title", n.ID))
-		}
-		if title, ok := data["title"].(string); !ok || strings.TrimSpace(title) == "" {
-			return nil, mcp.NewToolResultError(fmt.Sprintf("node %q data.title must be a non-empty string", n.ID))
-		}
-		if n.Type == inflow.NODE_START {
-			starts++
-		}
+		bad, _ := repoError(err, "workflow not saved")
+		return nil, bad
 	}
-	if starts == 0 {
-		return nil, mcp.NewToolResultError(`the graph needs exactly one node of type "startNode"`)
+	if !res.DryRun {
+		wslog.Emit("flow.changed", map[string]any{"id": res.Flow.ID, "source": "mcp"})
 	}
-	return &models.FlowRecord{
-		ID:       in.ID,
-		Title:    in.Title,
-		ViewFlow: compiler.VueFlow{Nodes: in.Nodes, Edges: in.Edges},
-	}, nil
+	return res, nil
 }

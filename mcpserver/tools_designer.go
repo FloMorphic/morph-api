@@ -2,14 +2,13 @@ package mcpserver
 
 import (
 	"context"
+	"errors"
 	"strings"
 
-	"github.com/FloMorphic/morph-api/api/wslog"
 	"github.com/FloMorphic/morph-api/designer"
-	"github.com/FloMorphic/morph-api/inflow"
+	"github.com/FloMorphic/morph-api/flowfile"
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
-	compiler "github.com/Inflowenger/inflow-fusion/compilers/vueFlow"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -31,7 +30,8 @@ Two rules that bite hardest (the guide explains them fully):
 - A promissall (Wait for All) only belongs where 2+ edges converge. After a single node — scoped or not — it has nothing to join.
 
 Node "data" carries the kind-specific fields (llm functions, rule handlers/logic_rule, http body, cast mappings, …); the guide documents them per kind. Defaults are merged for you, so send only what differs.
-flo_plan_patch converts + compiles a draft (no save); flo_apply_patch converts + saves it (same result as a hand-drawn flow). Both return a "problems" list flagging exactly the mistakes above (a routing/template many-scope error, a no-op promissall, branches converging without one) — read it and fix before/after applying.`
+flo_plan_patch converts + compiles a draft (no save); flo_apply_patch converts + saves it (same result as a hand-drawn flow). Both stamp plugin nodes with this install's identity by their "action" and list the actions no local plugin provides in "missingActions"; both return a "problems" list flagging exactly the mistakes above (a routing/template many-scope error, a no-op promissall, branches converging without one) — read it and fix before/after applying.
+The same patch under a small header ({title, plugins?, nodes, edges}) is the portable workflow document flo_export_workflow returns and flo_import_workflow takes — the form to read, edit and re-land an existing flow in.`
 
 // registerDesignerTools exposes the AI workflow-designer surface over MCP at
 // parity with the web app: the `flo_design_workflow` prompt (the same
@@ -39,9 +39,9 @@ flo_plan_patch converts + compiles a draft (no save); flo_apply_patch converts +
 // and the patch tools that convert a designer patch into a Vue-Flow graph
 // (designer.PlanPatch, the Go port of the front's planPatch) and plan or save
 // it. So an agent designs a flow from the same brain a person does, then lands
-// it through the same compiler + upsert.
+// it through the same road the editor's Import takes (flowfile.Import: plan,
+// stamp this install's plugin identity, lay out, compile-check, upsert).
 func registerDesignerTools(s *server.MCPServer, store repository.Store) {
-	flows := store.Workflows()
 
 	// The prompt: fetched like the front's POST /designer/prompt. `goal` is the
 	// workflow to build; `graph_id` optionally loads an existing flow so the
@@ -87,17 +87,30 @@ func registerDesignerTools(s *server.MCPServer, store repository.Store) {
 			mcp.WithDescription("Convert a CANDIDATE graph patch into a Vue-Flow graph and compile it — no save. Returns the lowered node graph on success (or the compile error), plus any design problems. Use it to check a draft before flo_apply_patch.\n\n"+patchGuide),
 		)...,
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		patch, bad := parsePatchInput(req)
+		doc, bad := parsePatchInput(req)
 		if bad != nil {
 			return bad, nil
 		}
-		graph, problems := designer.PlanPatch(*patch, nil)
-		rec := models.FlowRecord{Title: "draft", ViewFlow: graph}
-		startNodeID, nodes, err := inflow.FLowCompiler(rec)
+		// A plan is an import that stops short of saving. The planner needs one
+		// startNode to lay the graph out, but a draft fragment is still worth
+		// compiling for its problems, so that one refusal is reported, not raised.
+		res, err := flowfile.Import(ctx, store, flowfile.Input{Doc: *doc, Title: "draft", DryRun: true})
 		if err != nil {
-			return jsonResult(map[string]any{"ok": false, "error": err.Error(), "problems": problems, "graph": graph})
+			if errors.Is(err, flowfile.ErrInvalid) {
+				return jsonResult(map[string]any{"ok": false, "error": strings.TrimPrefix(err.Error(), flowfile.ErrInvalid.Error()+": ")})
+			}
+			return repoError(err, "extensions not readable")
 		}
-		return jsonResult(map[string]any{"ok": true, "startNodeId": startNodeID, "nodes": nodes, "problems": problems, "graph": graph})
+		out := map[string]any{
+			"ok": res.CompileError == "", "problems": res.Problems, "missingActions": res.MissingActions,
+			"graph": res.Flow.ViewFlow,
+		}
+		if res.CompileError != "" {
+			out["error"] = res.CompileError
+		} else {
+			out["startNodeId"], out["nodes"] = res.StartNodeID, res.Compiled
+		}
+		return jsonResult(out)
 	})
 
 	s.AddTool(mcp.NewTool("flo_apply_patch",
@@ -108,7 +121,7 @@ func registerDesignerTools(s *server.MCPServer, store repository.Store) {
 			mcp.WithDescription("Convert a graph patch into a Vue-Flow graph and SAVE it as a workflow — the same result as drawing it in the editor. Returns the saved workflow and any design problems. Structural rule: the patch must contain exactly one startNode.\n\n"+patchGuide),
 		)...,
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		patch, bad := parsePatchInput(req)
+		doc, bad := parsePatchInput(req)
 		if bad != nil {
 			return bad, nil
 		}
@@ -116,26 +129,20 @@ func registerDesignerTools(s *server.MCPServer, store repository.Store) {
 		if title == "" {
 			return mcp.NewToolResultError("title is required"), nil
 		}
-		graph, problems := designer.PlanPatch(*patch, nil)
-		if starts := countType(graph, inflow.NODE_START); starts != 1 {
-			return mcp.NewToolResultError(`the patch must contain exactly one node of kind "startNode"`), nil
+		res, bad := importDocument(ctx, store, flowfile.Input{Doc: *doc, ID: req.GetString("id", ""), Title: title})
+		if bad != nil {
+			return bad, nil
 		}
-		rec := models.FlowRecord{ID: req.GetString("id", ""), Title: title, ViewFlow: graph}
-		// Same headless-author normalisation + upsert the raw /flow path uses, so
-		// a patch-built flow lays out and renders like any other.
-		inflow.NormalizeGraph(&rec)
-		if err := flows.Upsert(ctx, &rec); err != nil {
-			return repoError(err, "workflow not saved")
-		}
-		wslog.Emit("flow.changed", map[string]any{"id": rec.ID, "source": "mcp"})
-		return jsonResult(map[string]any{"flow": rec, "problems": problems})
+		return jsonResult(map[string]any{
+			"flow": res.Flow, "problems": res.Problems, "missingActions": res.MissingActions, "compileError": res.CompileError,
+		})
 	})
 }
 
 // parsePatchInput reads the {nodes[], edges[]} authoring arguments into a
-// designer.Patch. The conversion (designer.PlanPatch) validates each node's kind
-// and wiring, so this only guards the outer shape.
-func parsePatchInput(req mcp.CallToolRequest) (*designer.Patch, *mcp.CallToolResult) {
+// bare (header-less) workflow document. The conversion (designer.PlanPatch)
+// validates each node's kind and wiring, so this only guards the outer shape.
+func parsePatchInput(req mcp.CallToolRequest) (*flowfile.Document, *mcp.CallToolResult) {
 	var in struct {
 		Nodes []designer.PatchNode `json:"nodes"`
 		Edges []designer.PatchEdge `json:"edges"`
@@ -147,7 +154,7 @@ func parsePatchInput(req mcp.CallToolRequest) (*designer.Patch, *mcp.CallToolRes
 	if len(in.Nodes) == 0 {
 		return nil, mcp.NewToolResultError("a patch needs at least one node")
 	}
-	return &designer.Patch{Nodes: in.Nodes, Edges: in.Edges, Notes: in.Notes}, nil
+	return &flowfile.Document{Nodes: in.Nodes, Edges: in.Edges, Notes: in.Notes}, nil
 }
 
 // designGuide assembles the designer prompt — designer.BuildPrompt, the single
@@ -225,15 +232,4 @@ func pluginActions(ctx context.Context, store repository.Store) []designer.Plugi
 		})
 	}
 	return out
-}
-
-// countType counts nodes of a Vue-Flow type in a planned graph.
-func countType(g compiler.VueFlow, typ string) int {
-	n := 0
-	for _, node := range g.Nodes {
-		if node.Type == typ {
-			n++
-		}
-	}
-	return n
 }

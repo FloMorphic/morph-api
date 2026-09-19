@@ -20,8 +20,10 @@ Every response is wrapped in `{ "data": ..., "error": ... }`.
 | Method | Path              | Body / query                          |
 | ------ | ----------------- | ------------------------------------- |
 | POST   | `/flow`           | `FlowRecord` (no `id` ⇒ create)       |
+| POST   | `/flow/import`    | `{ workflow: <portable document>, id?, title?, dryRun? }` — lands an exported workflow file; plugin nodes are re-stamped by action, unresolved ones reported in `missingActions` |
 | GET    | `/flow`           | `?page=1&per_page=12&search=`         |
 | GET    | `/flow/id/:id`    | —                                     |
+| GET    | `/flow/id/:id/export` | the flow as a portable document (the editor's export file: a designer graph patch under a small header, no install-local identity) |
 | DELETE | `/flow/id/:id`    | —                                     |
 
 ### Contexts — `ContextRecord`, page-paginated

@@ -350,9 +350,10 @@ func handlerTags(h map[string]any) []string {
 	return out
 }
 
-// derivedPorts is the ports a node grows from its own data — only LLM functions
-// and Rule handlers among the builtins (everything else has a single default
-// handle). Mirrors the ports() of the llm / rule catalog specs.
+// derivedPorts is the ports a node grows from its own data — LLM functions,
+// Rule handlers, and a plugin action's declared `outbound` branches (everything
+// else has a single default handle). Mirrors the ports() of the llm / rule /
+// plugin catalog specs.
 func derivedPorts(nodeType string, data map[string]any) []derivedPort {
 	switch nodeType {
 	case "llm":
@@ -377,6 +378,23 @@ func derivedPorts(nodeType string, data map[string]any) []derivedPort {
 		ports := make([]derivedPort, 0, len(handlers))
 		for i, h := range handlers {
 			ports = append(ports, derivedPort{id: firstStr(h["id"], fmt.Sprintf("h%d", i)), tags: handlerTags(h)})
+		}
+		return ports
+	case "plugin":
+		// An outbound entry carries its full tag list (unlike a handler's single
+		// name), so route off `tags` verbatim; the port is named by its title.
+		rows := asRows(data["outbound"])
+		ports := make([]derivedPort, 0, len(rows))
+		for i, p := range rows {
+			var tags []string
+			for _, t := range asSlice(p["tags"]) {
+				if s, ok := t.(string); ok && strings.TrimSpace(s) != "" {
+					tags = append(tags, strings.TrimSpace(s))
+				}
+			}
+			title, _ := p["title"].(string)
+			id := firstStr(strings.TrimSpace(title), strings.Join(tags, " / "), fmt.Sprintf("out%d", i))
+			ports = append(ports, derivedPort{id: id, tags: tags})
 		}
 		return ports
 	default:
@@ -414,7 +432,8 @@ func resolvePort(nodeType string, data map[string]any, requested string) (handle
 }
 
 // inspectScope flags the mistake the compiler cannot see: a routing node (LLM
-// with functions, Rule with handlers) given a many-valued scope. Such a node
+// with functions, Rule with handlers, plugin action with outbound) given a
+// many-valued scope. Such a node
 // routes for the whole node, so the runtime stops at the first element that
 // picks a branch and skips the rest — see the "many-scope limit" in the prompt.
 func inspectScope(raw PatchNode, data map[string]any) []Problem {
@@ -423,7 +442,8 @@ func inspectScope(raw PatchNode, data map[string]any) []Problem {
 		return nil
 	}
 	routes := (raw.Kind == "llm" && len(asRows(data["functions"])) > 0) ||
-		(raw.Kind == "rule" && len(asRows(data["handlers"])) > 0)
+		(raw.Kind == "rule" && len(asRows(data["handlers"])) > 0) ||
+		(raw.Kind == "plugin" && len(asRows(data["outbound"])) > 0)
 	if !routes {
 		return nil
 	}
