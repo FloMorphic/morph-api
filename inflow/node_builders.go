@@ -215,6 +215,35 @@ func buildHTTPNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData m
 	return nil
 }
 
+// buildJevNode lowers a Jev node to a Plugin whose body is the jev plugin's
+// exact RunBody contract — {settings, state, questions} — with `settings`
+// projected from data.settings (the settings-profile values the frontend
+// resolved onto the node: API key, model, base URL) and the state template
+// shipped straight through from the drawer's `body`, same pattern as the LLM
+// node. The questions live outside `body` like the LLM node's functions and
+// are lowered here to the wire shape (frontend-only row ids/titles dropped).
+func buildJevNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData map[string]any) error {
+	node.Type = inflowModels.PluginNodeType
+	pluginNode, err := newPluginNode(vfn, nodeData)
+	if err != nil {
+		return err
+	}
+	request := getStr(nodeData, "request")
+	if request == "" {
+		request = "run"
+	}
+	pluginNode.Request = request
+	pluginNode.Body = map[string]any{
+		"settings":  jevSettingsBody(getMap(nodeData, "settings")),
+		"questions": jevQuestions(nodeData),
+	}
+	for k, v := range getMap(nodeData, "body") {
+		pluginNode.Body[k] = v
+	}
+	node.Plugin = &pluginNode.PluginRule
+	return nil
+}
+
 // buildPluginActionNode lowers a node contributed by an imported plugin to a
 // Plugin node calling one of that plugin's actions.
 //
@@ -533,6 +562,80 @@ func boundFunctions(data map[string]any, withParams bool) []map[string]any {
 		out = append(out, fn)
 	}
 	return out
+}
+
+// jevSettingsBody projects the settings the frontend resolved onto the node
+// (data.settings — the selected settings-profile's values) onto the exact
+// JevSettings contract the jev plugin reads as `body.settings`. Extra keys are
+// dropped so the compiled body carries only the contract fields.
+func jevSettingsBody(profile map[string]any) map[string]any {
+	return map[string]any{
+		"access_token":    getStr(profile, "access_token"),
+		"model":           getStr(profile, "model"),
+		"url":             getStr(profile, "url"),
+		"timeout_seconds": int(getFloat(profile, "timeout_seconds")),
+	}
+}
+
+// jevQuestions lowers the drawer's question rows to the jev plugin's Question
+// wire shape ({id, type, instructions, route, min_confidence, options[{name,
+// description}]}), dropping the frontend-only fields (row ids, titles). A
+// question without an id, or an option without a name, is skipped — the plugin
+// would reject it, and it has no port to route on anyway. `route` is shipped
+// only when the drawer turned it off, since the plugin defaults it on.
+func jevQuestions(data map[string]any) []map[string]any {
+	rows := rowsOf(data["questions"])
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		id := getStr(row, "id")
+		if id == "" {
+			continue
+		}
+		options := rowsOf(row["options"])
+		opts := make([]map[string]any, 0, len(options))
+		for _, o := range options {
+			name := getStr(o, "name")
+			if name == "" {
+				continue
+			}
+			opts = append(opts, map[string]any{"name": name, "description": getStr(o, "description")})
+		}
+		q := map[string]any{
+			"id":           id,
+			"type":         getStr(row, "type"),
+			"instructions": getStr(row, "instructions"),
+			"options":      opts,
+		}
+		if route, ok := row["route"].(bool); ok && !route {
+			q["route"] = false
+		}
+		if mc := getFloat(row, "min_confidence"); mc > 0 {
+			q["min_confidence"] = mc
+		}
+		out = append(out, q)
+	}
+	return out
+}
+
+// rowsOf reads a list-of-objects node-data field. A saved flow arrives through
+// JSON, so its rows are []any of map[string]any; a flow compiled in memory
+// straight after a designer patch (flo_plan_patch) never round-trips, so the
+// same field is a []map[string]any. Accept both, or an in-memory preview
+// silently lowers to an empty list.
+func rowsOf(value any) []map[string]any {
+	switch rows := value.(type) {
+	case []map[string]any:
+		return rows
+	case []any:
+		out := make([]map[string]any, 0, len(rows))
+		for _, r := range rows {
+			if row, ok := r.(map[string]any); ok {
+				out = append(out, row)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // mcpConnection builds the McpConnection contract from the node data — the MCP

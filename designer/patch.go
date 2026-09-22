@@ -234,6 +234,16 @@ func mergeData(raw PatchNode) map[string]any {
 	if raw.Kind == "llm" {
 		data["functions"] = stampIDs(data["functions"], "fn")
 	}
+	// A Jev question's `id` is its semantic key (the answer key and tag prefix
+	// the designer names), not a row id, so it is left as written; only the
+	// option rows — the port handles — get stamped.
+	if raw.Kind == "jev" {
+		questions := asRows(data["questions"])
+		for _, q := range questions {
+			q["options"] = stampIDs(q["options"], "opt")
+		}
+		data["questions"] = questions
+	}
 	if raw.Kind == "rule" {
 		handlers := stampIDs(data["handlers"], "h")
 		for _, h := range handlers {
@@ -351,9 +361,9 @@ func handlerTags(h map[string]any) []string {
 }
 
 // derivedPorts is the ports a node grows from its own data — LLM functions,
-// Rule handlers, and a plugin action's declared `outbound` branches (everything
-// else has a single default handle). Mirrors the ports() of the llm / rule /
-// plugin catalog specs.
+// Jev question options, Rule handlers, and a plugin action's declared
+// `outbound` branches (everything else has a single default handle). Mirrors
+// the ports() of the llm / jev / rule / plugin catalog specs.
 func derivedPorts(nodeType string, data map[string]any) []derivedPort {
 	switch nodeType {
 	case "llm":
@@ -373,6 +383,8 @@ func derivedPorts(nodeType string, data map[string]any) []derivedPort {
 		}
 		ports = append(ports, derivedPort{id: exceptionTag, tags: []string{exceptionTag}})
 		return ports
+	case "jev":
+		return jevPorts(data)
 	case "rule":
 		handlers := asRows(data["handlers"])
 		ports := make([]derivedPort, 0, len(handlers))
@@ -400,6 +412,38 @@ func derivedPorts(nodeType string, data map[string]any) []derivedPort {
 	default:
 		return nil
 	}
+}
+
+// jevPorts is the ports a Jev node grows from its questions: every option of
+// every routed question (route unset or true) is one port, tagged
+// "<question id>.<option name>" — prefixed so options of different questions
+// that share a name never collide — plus the `_exception` port once anything
+// routes. A question with `route: false` is data only and derives nothing.
+// Mirrors the ports() of the jev catalog spec.
+func jevPorts(data map[string]any) []derivedPort {
+	var ports []derivedPort
+	for qi, q := range asRows(data["questions"]) {
+		if route, ok := q["route"].(bool); ok && !route {
+			continue
+		}
+		qid := strings.TrimSpace(asStr(q["id"]))
+		if qid == "" {
+			continue
+		}
+		for oi, o := range asRows(q["options"]) {
+			name := strings.TrimSpace(asStr(o["name"]))
+			var tags []string
+			if name != "" {
+				tags = []string{qid + "." + name}
+			}
+			id := firstStr(o["id"], strings.Join(tags, ""), fmt.Sprintf("q%d-opt%d", qi, oi))
+			ports = append(ports, derivedPort{id: id, tags: tags})
+		}
+	}
+	if len(ports) == 0 {
+		return nil
+	}
+	return append(ports, derivedPort{id: exceptionTag, tags: []string{exceptionTag}})
 }
 
 // resolvePort maps a designer-named port to the handle id and route tags an edge
@@ -442,6 +486,7 @@ func inspectScope(raw PatchNode, data map[string]any) []Problem {
 		return nil
 	}
 	routes := (raw.Kind == "llm" && len(asRows(data["functions"])) > 0) ||
+		(raw.Kind == "jev" && len(jevPorts(data)) > 0) ||
 		(raw.Kind == "rule" && len(asRows(data["handlers"])) > 0) ||
 		(raw.Kind == "plugin" && len(asRows(data["outbound"])) > 0)
 	if !routes {

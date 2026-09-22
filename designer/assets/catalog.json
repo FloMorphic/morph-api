@@ -144,6 +144,32 @@
     ]
   },
   {
+    "kind": "jev",
+    "label": "Jev",
+    "tagline": "Decide fast among declared options",
+    "description": "Evaluate a block of state against typed questions on Jev (TypeSafe's System One decider). Each question declares the answers it may return — choice options, score levels, or yes/no — and Jev returns a calibrated probability over every one of them in a single ~200ms call, never free text. Every option of a routed question is an output port (tag `<question id>.<option name>`); the top answer's port fires. Use it for the bounded, non-reasoning decisions (classify, triage, gate) that do not need an LLM turn. Its API key comes from a settings profile; `body.state` is the state template. Compiles to a Plugin node.",
+    "primitives": "Plugin",
+    "dataFields": {
+      "subject_prefix": "jev",
+      "idle_min": 5,
+      "request": "run",
+      "body": {
+        "state": ""
+      },
+      "questions": []
+    },
+    "notes": [
+      "`body.state` is the content to evaluate: a text template with `{{$.path}}` context vars. Keep it to what the questions need. A template that is exactly one `{{$.obj}}` token sends that JSON value as-is.",
+      "Each question is `{ \"id\": \"snake_case_id\", \"type\": \"choice\" | \"score\" | \"noul\", \"instructions\": \"the question Jev evaluates the state against\", \"route\": true, \"min_confidence\": 0, \"options\": [{ \"name\": \"snake_case\", \"description\": \"what this option means\" }] }`.",
+      "`options` per type — choice: one row per selectable option (1–255); score: the ordered levels lowest first (2–10 rows); noul: rows named `yes` / `no` carrying only descriptions (optional).",
+      "A routed question (`route: true`, the default) turns every option into an output port whose route tag is `<question id>.<option name>` (e.g. `category.billing`, `repeat.yes`); the top answer's port fires. Several routed questions fire one port each. `route: false` keeps the answer as data only (no ports).",
+      "Jev cannot answer outside the declared options and cannot decline: when the state fits none, it still picks one. Declare an `other` option when the state may not fit — that is the visible no-match branch.",
+      "Every node with a routed question also has an `_exception` port: it fires on an API error, a missing answer, or when `min_confidence` (0 = off) is set and the top answer's confidence falls below it.",
+      "The full distribution lands under `key` (`answers.<id>.probabilities`, `.confidence`, `.answer`), so a `rule` node after it can apply a policy; prefer that over `min_confidence` when the threshold should be visible on the canvas.",
+      "Not a reasoner: no tools, no memory, no chain of thought. When the decision needs reading documents or multi-step judgment, use an `llm` node with bound functions instead."
+    ]
+  },
+  {
     "kind": "hitl",
     "label": "Human in the Loop",
     "tagline": "Ask a human",

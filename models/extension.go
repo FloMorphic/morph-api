@@ -44,6 +44,7 @@ const (
 	ExtUntilType    ExtensionType = "until"      // -> extrinsic (svc.continue.at)
 	ExtCastType     ExtensionType = "cast"       // -> plugin
 	ExtHTTPType     ExtensionType = "http"       // -> plugin (HTTP / REST client)
+	ExtJevType      ExtensionType = "jev"        // -> plugin (Jev / System One decider)
 )
 
 // ExtensionRecord is one palette node: metadata plus, for extrinsic nodes, the

@@ -278,3 +278,65 @@ func TestPlanPatch_UnknownPortDropsEdge(t *testing.T) {
 		t.Errorf("expected unknown-port error, got %+v", problems)
 	}
 }
+
+// A Jev node routes on its questions' options: the port named by tag
+// (`<question>.<option>`) resolves to the stamped option row and the edge
+// carries that tag; `_exception` is present once anything routes; a
+// `route: false` question derives no ports; an unknown option drops the edge.
+func TestPlanPatch_JevPortsFromQuestions(t *testing.T) {
+	patch := Patch{
+		Nodes: []PatchNode{
+			{Ref: "start", Kind: "startNode", Title: "Start"},
+			{Ref: "triage", Kind: "jev", Title: "Triage", Data: map[string]any{
+				"body": map[string]any{"state": "{{$.ticket}}"},
+				"questions": []any{
+					map[string]any{"id": "category", "type": "choice", "instructions": "Which team?",
+						"options": []any{map[string]any{"name": "billing"}, map[string]any{"name": "sales"}}},
+					map[string]any{"id": "urgency", "type": "score", "instructions": "How urgent?", "route": false,
+						"options": []any{map[string]any{"name": "low"}, map[string]any{"name": "high"}}},
+				},
+			}},
+			{Ref: "bill", Kind: "js", Title: "Bill"},
+			{Ref: "err", Kind: "js", Title: "Err"},
+		},
+		Edges: []PatchEdge{
+			{From: "start", To: "triage"},
+			{From: "triage", To: "bill", Port: "category.billing"},
+			{From: "triage", To: "err", Port: "_exception"},
+			{From: "triage", To: "bill", Port: "urgency.high"}, // data-only question: no port
+		},
+	}
+	g, problems := PlanPatch(patch, nil)
+	jev, ok := findNodeByType(g, "jev")
+	if !ok {
+		t.Fatal("jev node not planned")
+	}
+	data := jev.Data.(map[string]any)
+	qs := asRows(data["questions"])
+	if len(qs) != 2 || asStr(qs[0]["id"]) != "category" {
+		t.Fatalf("questions not carried: %+v", qs)
+	}
+	opts := asRows(qs[0]["options"])
+	if len(opts) != 2 || asStr(opts[0]["id"]) == "" {
+		t.Fatalf("option rows should be id-stamped: %+v", opts)
+	}
+
+	var tags [][]string
+	for _, e := range g.Edges {
+		if e.Source == jev.ID {
+			tags = append(tags, e.Data.Tags)
+		}
+	}
+	if len(tags) != 2 {
+		t.Fatalf("want 2 routed edges off the jev node (billing + _exception), got %d: %v", len(tags), tags)
+	}
+	if len(tags[0]) != 1 || tags[0][0] != "category.billing" {
+		t.Errorf("billing edge tags = %v", tags[0])
+	}
+	if len(tags[1]) != 1 || tags[1][0] != "_exception" {
+		t.Errorf("exception edge tags = %v", tags[1])
+	}
+	if !hasProblem(problems, "error", `no port "urgency.high"`) {
+		t.Errorf("edge on a data-only question should be dropped, got %+v", problems)
+	}
+}

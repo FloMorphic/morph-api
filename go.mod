@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/Inflowenger/inflow-fusion v0.3.5
 	github.com/asg017/sqlite-vec-go-bindings v0.1.6
-	github.com/bytedance/sonic v1.15.2
+	github.com/bytedance/sonic v1.15.4
 	github.com/gofiber/contrib/v3/jwt v1.1.7
 	github.com/gofiber/contrib/v3/socketio v1.3.1
 	github.com/gofiber/fiber/v3 v3.4.0
@@ -25,7 +25,7 @@ require (
 	github.com/andybalholm/brotli v1.2.2 // indirect
 	github.com/bozd4g/go-http-client v1.0.2 // indirect
 	github.com/bytedance/gopkg v0.1.3 // indirect
-	github.com/bytedance/sonic/loader v0.5.1 // indirect
+	github.com/bytedance/sonic/loader v0.5.2 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/dlclark/regexp2 v1.11.0 // indirect
 	github.com/fasthttp/websocket v1.5.12 // indirect
