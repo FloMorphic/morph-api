@@ -6,10 +6,10 @@
 // itself touch NATS, so there is no coupling between the HTTP layer and the
 // engine wiring beyond the global socketio broadcast.
 //
-// Mirrors inspector-api's flow WebSocket, minus the JWT gate — the FloMorphic API
-// runs unauthenticated by default (see api.RegisterAll), and the web app never
-// mints a token in that mode. When auth is turned on the CRUD groups are guarded
-// upstream; the socket stays open so the log drawer keeps working locally.
+// Auth: when AuthEnabled the socket is gated like the CRUD groups, but with the
+// token read from the handshake query string as well as the header — a browser
+// cannot set headers on a WebSocket upgrade. Without auth the socket is open,
+// which is the default and how the app runs standalone.
 package wslog
 
 import (
@@ -17,6 +17,8 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/FloMorphic/morph-api/env"
+	"github.com/FloMorphic/morph-api/etc"
 	"github.com/gofiber/contrib/v3/socketio"
 	"github.com/gofiber/fiber/v3"
 )
@@ -43,10 +45,19 @@ func loadHandlers() {
 }
 
 // Register mounts the log socket. The `:id` segment is a caller-chosen session
-// label (the web app uses a fixed one); it is not authenticated and only serves
-// to give each connection a name in the logs.
+// label (the web app uses a fixed one); it only serves to give each connection a
+// name in the logs.
+//
+// When AuthEnabled is set the route is gated by HS256SocketKeyHandler, which
+// accepts the bearer in the handshake query string as well as the header.
+// Without it the socket was the one unguarded surface on an otherwise guarded
+// install.
 func Register(app fiber.Router) {
 	loadHandlers()
+	if env.AuthEnabled() {
+		app.Get("/ws/:id", etc.HS256SocketKeyHandler(), socketio.New(wshandler))
+		return
+	}
 	app.Get("/ws/:id", socketio.New(wshandler))
 }
 

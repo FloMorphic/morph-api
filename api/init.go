@@ -18,8 +18,8 @@ import (
 	workflowControllers "github.com/FloMorphic/morph-api/api/workflow"
 	"github.com/FloMorphic/morph-api/api/wslog"
 	"github.com/FloMorphic/morph-api/env"
-	"github.com/FloMorphic/morph-api/mcpserver"
 	"github.com/FloMorphic/morph-api/etc"
+	"github.com/FloMorphic/morph-api/mcpserver"
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
 	"github.com/gofiber/fiber/v3"
@@ -40,9 +40,11 @@ func RegisterAll(app fiber.Router, store repository.Store) {
 		return etc.OK(c, fiber.Map{"status": "ok"})
 	})
 
-	// Engine event stream for the log drawer. Mounted before the auth gate so the
-	// socket stays reachable even when the CRUD groups are guarded (the web app
-	// mints no token in local mode).
+	// Engine event stream for the log drawer. Mounted outside the CRUD gate
+	// because a WebSocket upgrade cannot carry an Authorization header; wslog
+	// applies its own equivalent gate when AuthEnabled, reading the bearer from
+	// the handshake query string (see etc.HS256SocketKeyHandler). Unauthenticated
+	// by default, like the CRUD groups.
 	wslog.Register(app)
 
 	// Public webhook ingress (/hooks/:slug). Mounted before the auth gate: its
