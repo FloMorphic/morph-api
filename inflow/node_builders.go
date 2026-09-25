@@ -8,6 +8,7 @@ package inflow
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -501,7 +502,7 @@ func pluginUniqId(data map[string]any, nodeID string) string {
 // LLMSettings contract the llm / mcp plugins read as `body.settings`. Extra
 // keys are dropped so the compiled body carries only the contract fields.
 func llmSettingsBody(profile map[string]any) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"provider":     getStr(profile, "provider"),
 		"url":          getStr(profile, "url"),
 		"model":        getStr(profile, "model"),
@@ -509,6 +510,12 @@ func llmSettingsBody(profile map[string]any) map[string]any {
 		"temperature":  getFloat(profile, "temperature"),
 		"max_tokens":   int(getFloat(profile, "max_tokens")),
 	}
+	// The call deadline and the retry count are shipped only when the profile
+	// actually carries them, so the plugin's own defaults apply to the profiles
+	// — nearly all of them — that never mention these. See putOptionalInt.
+	putOptionalInt(out, profile, "request_timeout_s")
+	putOptionalInt(out, profile, "max_retries")
+	return out
 }
 
 // httpSettingsBody projects the settings the frontend resolved onto the node
@@ -527,6 +534,9 @@ func httpSettingsBody(profile map[string]any) map[string]any {
 		"timeout_seconds":      int(getFloat(profile, "timeout_seconds")),
 		"insecure_skip_verify": getBool(profile, "insecure_skip_verify"),
 	}
+	// Shipped only when the profile carries it: absent means the plugin's own
+	// default, an explicit 0 means never retry. See putOptionalInt.
+	putOptionalInt(out, profile, "max_retries")
 	if h, ok := profile["headers"]; ok {
 		out["headers"] = h
 	}
@@ -689,6 +699,34 @@ func getFloat(data map[string]any, key string) float64 {
 		}
 	}
 	return 0
+}
+
+// putOptionalInt copies a whole-number field onto the compiled body ONLY when
+// the profile actually carries one.
+//
+// The other projections here flatten an absent field to its zero value, which
+// is right when zero means "unset" (max_tokens: 0 → let the provider decide).
+// For the resilience knobs it is the opposite: the plugins read max_retries as
+// a POINTER precisely so that absent and zero are different instructions —
+// absent takes the plugin's default, an explicit 0 turns retrying off. Writing
+// a 0 for a key nobody set would silently disable retries on every existing
+// profile, which is the exact failure these knobs were added to prevent.
+//
+// A blank or unparseable value counts as absent: a settings form that shipped
+// "" for an untouched number must not read as "off".
+func putOptionalInt(out, profile map[string]any, key string) {
+	switch v := profile[key].(type) {
+	case float64:
+		out[key] = int(v)
+	case int64:
+		out[key] = int(v)
+	case int:
+		out[key] = v
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			out[key] = n
+		}
+	}
 }
 
 // getBool reads a boolean field defensively (false when absent/other type). A
