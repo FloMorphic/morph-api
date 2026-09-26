@@ -38,7 +38,7 @@ ARG PLUGINS_REF=main
 ARG GOPROXY="https://proxy.golang.org,direct"
 
 # ── the API ───────────────────────────────────────────────────────────────────
-FROM golang:1.26-alpine AS api-build
+FROM golang:1.27-alpine AS api-build
 ARG GOPROXY
 # sqlite-vec's amalgamation contains, for every non-Windows/wasm target:
 #   typedef u_int8_t uint8_t;  (and u_int16_t / u_int64_t)
@@ -60,7 +60,7 @@ RUN make build BINARY=/out/flomorphic-api \
       CGO_CFLAGS="-I/src/repository/sqlite/cdeps $MUSL_CFLAGS"
 
 # ── the builtin plugin nodes (pure Go, one binary per folder) ─────────────────
-FROM golang:1.26-alpine AS plugins-build
+FROM golang:1.27-alpine AS plugins-build
 ARG PLUGINS_REPO
 ARG PLUGINS_REF
 ARG GOPROXY
@@ -82,7 +82,7 @@ RUN mkdir -p /out/bin && cd /src/plugins && \
 # A Go image rather than bare alpine, deliberately: PLUGINS_REPO / PLUGINS_REF
 # can be repointed at run time and the entrypoint then rebuilds the plugin
 # binaries in place. Without a toolchain that extension point disappears.
-FROM golang:1.26-alpine
+FROM golang:1.27-alpine
 RUN apk add --no-cache git curl jq openssl ca-certificates tzdata
 
 COPY --from=api-build     /out/flomorphic-api /app/flomorphic-api

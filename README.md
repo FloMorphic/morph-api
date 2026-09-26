@@ -240,7 +240,7 @@ store drops it. Document stores persist only their table/column schema.
 
 ## Running
 
-Requires Go 1.26+, a C compiler (cgo), and — for regenerating queries — `sqlc`.
+Requires Go 1.27+, a C compiler (cgo), and — for regenerating queries — `sqlc`.
 
 ```sh
 cp .env.example .env      # optional; sensible defaults otherwise

@@ -1,9 +1,9 @@
 module github.com/FloMorphic/morph-api
 
-go 1.26.2
+go 1.27
 
 require (
-	github.com/Inflowenger/inflow-fusion v0.3.5
+	github.com/Inflowenger/inflow-fusion v0.3.6
 	github.com/asg017/sqlite-vec-go-bindings v0.1.6
 	github.com/bytedance/sonic v1.15.4
 	github.com/gofiber/contrib/v3/jwt v1.1.7
@@ -14,7 +14,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mark3labs/mcp-go v0.58.0
 	github.com/mattn/go-sqlite3 v1.14.48
-	github.com/nats-io/nats.go v1.52.0
+	github.com/nats-io/nats.go v1.54.0
 	github.com/nats-io/nkeys v0.4.16
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/tmc/langchaingo v0.1.14
@@ -34,7 +34,7 @@ require (
 	github.com/gofiber/schema v1.8.0 // indirect
 	github.com/gofiber/utils/v2 v2.1.1 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
-	github.com/klauspost/compress v1.19.0 // indirect
+	github.com/klauspost/compress v1.20.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
@@ -54,10 +54,10 @@ require (
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/arch v0.0.0-20210923205945-b76863e36670 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )
 
 // replace github.com/Inflowenger/inflow-fusion => ../../inflow-fusion
