@@ -63,7 +63,19 @@ type Process struct {
 	// engine so a join past the resume point does not lock; it also describes what
 	// the run traversed, for rendering. nil/{} for a run that produced none.
 	Snapshot map[string]any `json:"snapshot,omitempty"`
-	Error    string         `json:"error,omitempty"`
+	// Errors is the ledger of everything that went wrong during this run (the
+	// engine's "_errors": pid/count/items, each item carrying kind, flow, node,
+	// code and message), stored by the UpdateContext handler alongside Snapshot.
+	//
+	// It is kept per-pid and not on the shared context row for the same reason the
+	// snapshot is: overlapping runs over one contextId would clobber each other's.
+	// It is how a caller learns what a run it did not watch actually did — a flow
+	// does not stop for a node error, so a run that hit several can still finish,
+	// and without this the row says it completed and nothing more. An item's
+	// `kind` separates what the flow got wrong ("node") from what the platform did
+	// ("system"). nil/absent for a run that hit nothing.
+	Errors map[string]any `json:"errors,omitempty"`
+	Error  string         `json:"error,omitempty"`
 	// ScheduledAt is the epoch-millis a scheduled run should launch at; 0 for an
 	// immediate run.
 	ScheduledAt int64 `json:"scheduledAt"`

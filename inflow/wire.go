@@ -76,42 +76,55 @@ func (w *InflowWire) UpdateContext(msg *nats.Msg) {
 			return
 		}
 	}
-	// Persist the run-end traversal snapshot per-pid so a continuation (a scheduled
-	// Continue After, a HITL resume) can seed it — the counterpart to
-	// loadResumeSnapshot. The engine writes the snapshot into the doc header under
-	// "_sched", and the pid rides the message header; we keep it on the process row
-	// for that pid, NOT on the shared context row above, which overlapping runs of
-	// the same contextId clobber (the bug this whole change fixes).
+	// Persist what the run left in the doc header, per-pid: the traversal snapshot
+	// under "_sched", so a continuation (a scheduled Continue After, a HITL resume)
+	// can seed it — the counterpart to loadResumeSnapshot — and the error ledger
+	// under "_errors", so a caller can tell a run that finished cleanly from one
+	// that finished having hit things. The pid rides the message header; both go on
+	// the process row for that pid, NOT on the shared context row above, which
+	// overlapping runs of the same contextId clobber (the bug this whole change
+	// fixes).
 	//
 	// Done before the reply on purpose: the engine sends this final context push
 	// and waits for the ack before it emits proc.finish, so storing first orders
 	// the write ahead of the finish handler's own update of this row — no lost
-	// update, and the snapshot is on the row before any resume can fire.
-	w.storeRunSnapshot(msg.Header.Get(MetaPidKey), incoming.Header)
+	// update, and both are on the row before any resume can fire.
+	w.storeRunOutcome(msg.Header.Get(MetaPidKey), incoming.Header)
 
 	msg.Respond([]byte(`accepted`))
 }
 
-// storeRunSnapshot keeps the engine's run-end traversal snapshot on the process
-// row for pid, where a later resume reads it back (loadResumeSnapshot). A message
-// without a pid or without a "_sched" header is an ordinary mid-run context write
-// and is skipped, so this only fires on the write that carries the snapshot.
-func (w *InflowWire) storeRunSnapshot(pid string, header map[string]any) {
+// storeRunOutcome keeps what the engine left in the doc header on the process row
+// for pid: the run-end traversal snapshot a later resume reads back
+// (loadResumeSnapshot), and the ledger of errors the run hit.
+//
+// A message carrying neither is an ordinary mid-run context write and is skipped,
+// so this only fires on the write that ends a run. Each is taken on its own — a
+// run that errored and one that did not both write a snapshot, and neither may be
+// assumed from the other — and they are written in one update, because they
+// describe the same instant of the same run.
+func (w *InflowWire) storeRunOutcome(pid string, header map[string]any) {
 	if strings.TrimSpace(pid) == "" || header == nil {
 		return
 	}
-	sched, ok := header[schedHeaderKey].(map[string]any)
-	if !ok {
+	sched, hasSched := header[schedHeaderKey].(map[string]any)
+	errs, hasErrs := header[errHeaderKey].(map[string]any)
+	if !hasSched && !hasErrs {
 		return
 	}
 	rec, err := processByPID(context.Background(), w.store, pid)
 	if err != nil {
-		fmt.Printf("inflow: resume snapshot: process pid %s not found: %v\n", pid, err)
+		fmt.Printf("inflow: run outcome: process pid %s not found: %v\n", pid, err)
 		return
 	}
-	rec.Snapshot = sched
+	if hasSched {
+		rec.Snapshot = sched
+	}
+	if hasErrs {
+		rec.Errors = errs
+	}
 	if err := w.store.Processes().Update(context.Background(), rec); err != nil {
-		fmt.Printf("inflow: resume snapshot: update process %d (pid %s): %v\n", rec.IndexID, pid, err)
+		fmt.Printf("inflow: run outcome: update process %d (pid %s): %v\n", rec.IndexID, pid, err)
 	}
 }
 

@@ -281,6 +281,11 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 // UpdateContext lifts it off the set.context message onto the process row.
 const schedHeaderKey = "_sched"
 
+// errHeaderKey is the context-doc header slot the engine writes this run's error
+// ledger into (fractal-core errstamp.go). UpdateContext lifts it onto the process
+// row beside the snapshot.
+const errHeaderKey = "_errors"
+
 // processByPID returns the process row for an engine pid, across any status —
 // unlike GetRunningByPID, whose row is gone once the producing run finished,
 // which is exactly the state it is in by the time a resume looks it up. The pid
