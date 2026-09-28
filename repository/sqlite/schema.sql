@@ -122,6 +122,12 @@ CREATE TABLE IF NOT EXISTS processes (
     -- captured per run so a continuation (Continue After, HITL resume) can seed it,
     -- and available to render what the run traversed.
     snapshot      TEXT    NOT NULL DEFAULT '{}',
+    -- The run's error ledger (engine "_errors": pid/count/items), lifted off the
+    -- same run-end context header as `snapshot`. Per-pid and not on the shared
+    -- context row, which overlapping runs of one contextId clobber. Distinct from
+    -- `error` below: that is the one thing that ended the run, this is everything
+    -- the run recorded and carried on past.
+    errors        TEXT    NOT NULL DEFAULT '{}',
     error         TEXT    NOT NULL DEFAULT '',
     scheduled_at  INTEGER NOT NULL DEFAULT 0,
     started_at    INTEGER NOT NULL DEFAULT 0,

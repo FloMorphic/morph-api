@@ -184,6 +184,7 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE human_tasks ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE processes ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE processes ADD COLUMN snapshot TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE processes ADD COLUMN errors TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE connect_connections ADD COLUMN admin_token TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range migrations {

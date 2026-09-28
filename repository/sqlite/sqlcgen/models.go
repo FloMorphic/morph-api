@@ -105,6 +105,7 @@ type Process struct {
 	Request     string
 	Meta        string
 	Snapshot    string
+	Errors      string
 	Error       string
 	ScheduledAt int64
 	StartedAt   int64

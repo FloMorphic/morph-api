@@ -53,7 +53,7 @@ func (q *Queries) DeleteProcess(ctx context.Context, indexID int64) (int64, erro
 }
 
 const getNextScheduledProcess = `-- name: GetNextScheduledProcess :one
-SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, snapshot, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
+SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, snapshot, errors, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
 WHERE status = 'scheduled'
 ORDER BY scheduled_at ASC, index_id ASC
 LIMIT 1
@@ -74,6 +74,7 @@ func (q *Queries) GetNextScheduledProcess(ctx context.Context) (Process, error) 
 		&i.Request,
 		&i.Meta,
 		&i.Snapshot,
+		&i.Errors,
 		&i.Error,
 		&i.ScheduledAt,
 		&i.StartedAt,
@@ -86,7 +87,7 @@ func (q *Queries) GetNextScheduledProcess(ctx context.Context) (Process, error) 
 }
 
 const getProcess = `-- name: GetProcess :one
-SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, snapshot, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes WHERE index_id = ?1
+SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, snapshot, errors, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes WHERE index_id = ?1
 `
 
 func (q *Queries) GetProcess(ctx context.Context, indexID int64) (Process, error) {
@@ -104,6 +105,7 @@ func (q *Queries) GetProcess(ctx context.Context, indexID int64) (Process, error
 		&i.Request,
 		&i.Meta,
 		&i.Snapshot,
+		&i.Errors,
 		&i.Error,
 		&i.ScheduledAt,
 		&i.StartedAt,
@@ -116,7 +118,7 @@ func (q *Queries) GetProcess(ctx context.Context, indexID int64) (Process, error
 }
 
 const getRunningProcessByPID = `-- name: GetRunningProcessByPID :one
-SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, snapshot, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
+SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, snapshot, errors, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
 WHERE pid = ?1 AND status = 'running'
 ORDER BY index_id DESC
 LIMIT 1
@@ -137,6 +139,7 @@ func (q *Queries) GetRunningProcessByPID(ctx context.Context, pid string) (Proce
 		&i.Request,
 		&i.Meta,
 		&i.Snapshot,
+		&i.Errors,
 		&i.Error,
 		&i.ScheduledAt,
 		&i.StartedAt,
@@ -151,12 +154,12 @@ func (q *Queries) GetRunningProcessByPID(ctx context.Context, pid string) (Proce
 const insertProcess = `-- name: InsertProcess :execresult
 INSERT INTO processes (
     pid, instance_id, flow_id, context_id, start_node_id, status, resource_url,
-    request, meta, snapshot, error, scheduled_at, started_at, finished_at, duration_ms,
+    request, meta, snapshot, errors, error, scheduled_at, started_at, finished_at, duration_ms,
     created_at, updated_at
 ) VALUES (
     ?1, ?2, ?3, ?4, ?5, ?6, ?7,
-    ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-    ?16, ?17
+    ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+    ?17, ?18
 )
 `
 
@@ -171,6 +174,7 @@ type InsertProcessParams struct {
 	Request     string
 	Meta        string
 	Snapshot    string
+	Errors      string
 	Error       string
 	ScheduledAt int64
 	StartedAt   int64
@@ -192,6 +196,7 @@ func (q *Queries) InsertProcess(ctx context.Context, arg InsertProcessParams) (s
 		arg.Request,
 		arg.Meta,
 		arg.Snapshot,
+		arg.Errors,
 		arg.Error,
 		arg.ScheduledAt,
 		arg.StartedAt,
@@ -203,7 +208,7 @@ func (q *Queries) InsertProcess(ctx context.Context, arg InsertProcessParams) (s
 }
 
 const listDueScheduledProcesses = `-- name: ListDueScheduledProcesses :many
-SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, snapshot, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
+SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, snapshot, errors, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
 WHERE status = 'scheduled' AND scheduled_at <= ?1
 ORDER BY scheduled_at ASC, index_id ASC
 `
@@ -229,6 +234,7 @@ func (q *Queries) ListDueScheduledProcesses(ctx context.Context, now int64) ([]P
 			&i.Request,
 			&i.Meta,
 			&i.Snapshot,
+			&i.Errors,
 			&i.Error,
 			&i.ScheduledAt,
 			&i.StartedAt,
@@ -251,7 +257,7 @@ func (q *Queries) ListDueScheduledProcesses(ctx context.Context, now int64) ([]P
 }
 
 const listProcesses = `-- name: ListProcesses :many
-SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, snapshot, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
+SELECT index_id, pid, instance_id, flow_id, context_id, start_node_id, status, resource_url, request, meta, snapshot, errors, error, scheduled_at, started_at, finished_at, duration_ms, created_at, updated_at FROM processes
 WHERE (?1 = '' OR pid LIKE '%' || ?1 || '%' OR flow_id LIKE '%' || ?1 || '%')
   AND (?2 = '' OR status = ?2)
   AND (?3 = '' OR pid = ?3)
@@ -300,6 +306,7 @@ func (q *Queries) ListProcesses(ctx context.Context, arg ListProcessesParams) ([
 			&i.Request,
 			&i.Meta,
 			&i.Snapshot,
+			&i.Errors,
 			&i.Error,
 			&i.ScheduledAt,
 			&i.StartedAt,
@@ -333,13 +340,14 @@ UPDATE processes SET
     request = ?8,
     meta = ?9,
     snapshot = ?10,
-    error = ?11,
-    scheduled_at = ?12,
-    started_at = ?13,
-    finished_at = ?14,
-    duration_ms = ?15,
-    updated_at = ?16
-WHERE index_id = ?17
+    errors = ?11,
+    error = ?12,
+    scheduled_at = ?13,
+    started_at = ?14,
+    finished_at = ?15,
+    duration_ms = ?16,
+    updated_at = ?17
+WHERE index_id = ?18
 `
 
 type UpdateProcessParams struct {
@@ -353,6 +361,7 @@ type UpdateProcessParams struct {
 	Request     string
 	Meta        string
 	Snapshot    string
+	Errors      string
 	Error       string
 	ScheduledAt int64
 	StartedAt   int64
@@ -374,6 +383,7 @@ func (q *Queries) UpdateProcess(ctx context.Context, arg UpdateProcessParams) (i
 		arg.Request,
 		arg.Meta,
 		arg.Snapshot,
+		arg.Errors,
 		arg.Error,
 		arg.ScheduledAt,
 		arg.StartedAt,
