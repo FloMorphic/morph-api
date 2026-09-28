@@ -95,15 +95,16 @@ type StartParams struct {
 	// scheduled resume still carries the flag when the scheduler launches it.
 	Resume *inflowModels.ResumeState
 	// Settings overrides the engine run settings (proc timeout, node-traversal
-	// limit, fallback request timeout). Zero fields keep the fusion defaults, so a
-	// caller that only wants to bump one leaves the others at 0. See RunSettings.
+	// limit, fallback request timeout, stop-on-error). Zero fields keep the fusion
+	// defaults, so a caller that only wants to bump one leaves the rest zero. See
+	// RunSettings.
 	Settings RunSettings
 }
 
 // RunSettings carries the caller-tunable engine settings for one run. Each is an
 // override of the inflow-fusion default (proc_timeout 1h, proc_node_limit 500,
-// svc_req_timeout 5s); a zero value means "leave the default", so a partially
-// filled struct only moves the fields it sets.
+// svc_req_timeout 5s, stop_on_error false); a zero value means "leave the
+// default", so a partially filled struct only moves the fields it sets.
 type RunSettings struct {
 	// ExecuteTimeoutSec caps how long the whole run may take, in seconds.
 	ExecuteTimeoutSec int64
@@ -113,6 +114,11 @@ type RunSettings struct {
 	// RequestTimeoutSec is the fallback per-request timeout (seconds) used for any
 	// http/nats call that did not set its own.
 	RequestTimeoutSec int64
+	// StopOnError makes the run halt at the first node error instead of carrying
+	// on down the flow. The engine default is false (carry on), and false is also
+	// this struct's zero value, so — like the numeric fields — only a true is
+	// shipped as an override.
+	StopOnError bool
 }
 
 // StartWorkflow records a process row and (unless scheduled) dispatches the
@@ -234,6 +240,11 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 	}
 	if params.Settings.ProcessNodeLimit > 0 {
 		opts = append(opts, fuse.WithNodeLimit(params.Settings.ProcessNodeLimit))
+	}
+	// Only a true is shipped: the engine default is already false, and passing
+	// the option unconditionally would be a no-op write of that same default.
+	if params.Settings.StopOnError {
+		opts = append(opts, fuse.WithStopOnError(true))
 	}
 
 	p, err := fuse.NewProcess(startNodeIDs, opts...)

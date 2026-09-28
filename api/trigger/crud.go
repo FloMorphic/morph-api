@@ -121,7 +121,7 @@ func (ctl *controller) normalize(ctx context.Context, t *models.Trigger) error {
 	default:
 		return fmt.Errorf("unknown context mode %q", t.ContextMode)
 	}
-	if s := t.Settings; s != nil && s.ExecuteTimeoutSec == 0 && s.ProcessNodeLimit == 0 && s.RequestTimeoutSec == 0 {
+	if s := t.Settings; s != nil && s.ExecuteTimeoutSec == 0 && s.ProcessNodeLimit == 0 && s.RequestTimeoutSec == 0 && !s.StopOnError {
 		t.Settings = nil // all-default settings carry nothing
 	}
 

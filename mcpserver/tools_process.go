@@ -63,6 +63,7 @@ func registerProcessTools(s *server.MCPServer, store repository.Store) {
 		mcp.WithNumber("executeTimeoutSec", mcp.Description("override: whole-run timeout (seconds)")),
 		mcp.WithNumber("processNodeLimit", mcp.Description("override: max node visits (runaway-loop guard)")),
 		mcp.WithNumber("requestTimeoutSec", mcp.Description("override: fallback per-request timeout (seconds)")),
+		mcp.WithBoolean("stopOnError", mcp.Description("override: halt the run at the first node error (default false: carry on)")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		flowID, err := req.RequireString("flowId")
 		if err != nil {
@@ -86,6 +87,7 @@ func registerProcessTools(s *server.MCPServer, store repository.Store) {
 				ExecuteTimeoutSec: int64(req.GetInt("executeTimeoutSec", 0)),
 				ProcessNodeLimit:  uint16(req.GetInt("processNodeLimit", 0)),
 				RequestTimeoutSec: int64(req.GetInt("requestTimeoutSec", 0)),
+				StopOnError:       req.GetBool("stopOnError", false),
 			},
 		})
 		if err != nil {

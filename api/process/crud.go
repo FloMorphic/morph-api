@@ -33,12 +33,16 @@ type startInput struct {
 }
 
 // runSettingsInput mirrors the frontend run settings: process execute timeout and
-// fallback request timeout (both seconds), and the node-traversal limit. Optional
-// and per-field — a 0 (or absent) field leaves that engine default in place.
+// fallback request timeout (both seconds), the node-traversal limit, and the
+// stop-on-error switch. Optional and per-field — a 0/false (or absent) field
+// leaves that engine default in place.
 type runSettingsInput struct {
 	ExecuteTimeoutSec int64  `json:"executeTimeoutSec"`
 	ProcessNodeLimit  uint16 `json:"processNodeLimit"`
 	RequestTimeoutSec int64  `json:"requestTimeoutSec"`
+	// StopOnError halts the run at the first node error. The engine default is
+	// false, so only a true sent from the frontend changes anything.
+	StopOnError bool `json:"stopOnError"`
 }
 
 // start handles POST /process — record a process row and dispatch the run to the
@@ -60,6 +64,7 @@ func (ctl *controller) start(c fiber.Ctx) error {
 			ExecuteTimeoutSec: in.Settings.ExecuteTimeoutSec,
 			ProcessNodeLimit:  in.Settings.ProcessNodeLimit,
 			RequestTimeoutSec: in.Settings.RequestTimeoutSec,
+			StopOnError:       in.Settings.StopOnError,
 		}
 	}
 	rec, err := inflow.StartWorkflow(c.Context(), ctl.store, inflow.StartParams{

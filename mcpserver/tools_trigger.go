@@ -75,7 +75,7 @@ func registerTriggerTools(s *server.MCPServer, store repository.Store) {
 		mcp.WithArray("methods", mcp.Description("allowed HTTP methods, e.g. [\"POST\"]; empty allows any"), mcp.WithStringItems()),
 		mcp.WithArray("whitelistIp", mcp.Description("allowed source IPs; required when auth.method=none"), mcp.WithStringItems()),
 		mcp.WithObject("auth", mcp.Description("credential check: {method: none|static|basic|jwt|hmac, secret?, headerKey?, headerPattern?, hashAlgo?, digest?}")),
-		mcp.WithObject("settings", mcp.Description("engine overrides: {executeTimeoutSec?, processNodeLimit?, requestTimeoutSec?}")),
+		mcp.WithObject("settings", mcp.Description("engine overrides: {executeTimeoutSec?, processNodeLimit?, requestTimeoutSec?, stopOnError?}")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var t models.Trigger
 		if err := req.BindArguments(&t); err != nil {
@@ -99,7 +99,7 @@ func registerTriggerTools(s *server.MCPServer, store repository.Store) {
 		mcp.WithString("cron", mcp.Description("cron spec when mode=cron, e.g. \"0 9 * * 1\"")),
 		mcp.WithNumber("intervalSec", mcp.Description("interval in seconds when mode=interval")),
 		mcp.WithString("timezone", mcp.Description("IANA timezone for a cron spec (optional)")),
-		mcp.WithObject("settings", mcp.Description("engine overrides: {executeTimeoutSec?, processNodeLimit?, requestTimeoutSec?}")),
+		mcp.WithObject("settings", mcp.Description("engine overrides: {executeTimeoutSec?, processNodeLimit?, requestTimeoutSec?, stopOnError?}")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var t models.Trigger
 		if err := req.BindArguments(&t); err != nil {
@@ -176,7 +176,7 @@ func normalizeTrigger(ctx context.Context, store repository.Store, t *models.Tri
 	default:
 		return fmt.Errorf("unknown context mode %q", t.ContextMode)
 	}
-	if s := t.Settings; s != nil && s.ExecuteTimeoutSec == 0 && s.ProcessNodeLimit == 0 && s.RequestTimeoutSec == 0 {
+	if s := t.Settings; s != nil && s.ExecuteTimeoutSec == 0 && s.ProcessNodeLimit == 0 && s.RequestTimeoutSec == 0 && !s.StopOnError {
 		t.Settings = nil
 	}
 

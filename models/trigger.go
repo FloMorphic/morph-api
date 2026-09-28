@@ -85,13 +85,16 @@ const (
 )
 
 // RunSettings are the caller-tunable engine overrides carried on a trigger, the
-// same three the manual Run dialog collects. A zero/absent field keeps the engine
-// default, so a trigger only moves what the user set. Mapped to inflow.RunSettings
-// at launch.
+// same ones the manual Run dialog collects. A zero/false/absent field keeps the
+// engine default, so a trigger only moves what the user set. Mapped to
+// inflow.RunSettings at launch.
 type RunSettings struct {
 	ExecuteTimeoutSec int64  `json:"executeTimeoutSec,omitempty"`
 	ProcessNodeLimit  uint16 `json:"processNodeLimit,omitempty"`
 	RequestTimeoutSec int64  `json:"requestTimeoutSec,omitempty"`
+	// StopOnError halts a fired run at the first node error instead of carrying
+	// on. The engine default is false, which is also the zero value here.
+	StopOnError bool `json:"stopOnError,omitempty"`
 }
 
 // Trigger carries every kind's fields on one struct, discriminated by Kind. The

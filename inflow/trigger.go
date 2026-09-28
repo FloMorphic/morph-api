@@ -169,5 +169,6 @@ func triggerRunSettings(t *models.Trigger) RunSettings {
 		ExecuteTimeoutSec: t.Settings.ExecuteTimeoutSec,
 		ProcessNodeLimit:  t.Settings.ProcessNodeLimit,
 		RequestTimeoutSec: t.Settings.RequestTimeoutSec,
+		StopOnError:       t.Settings.StopOnError,
 	}
 }
