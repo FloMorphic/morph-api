@@ -181,6 +181,9 @@ func Import(ctx context.Context, store repository.Store, in Input) (*Result, err
 	if title == "" {
 		title = "Imported workflow"
 	}
+	// Re-attach profiles the document carried by reference; see the function.
+	resolveSettingsProfiles(ctx, store, &graph)
+
 	rec := models.FlowRecord{ID: strings.TrimSpace(in.ID), Title: title, ViewFlow: graph}
 	inflow.NormalizeGraph(&rec)
 
@@ -206,6 +209,57 @@ func Import(ctx context.Context, store repository.Store, in Input) (*Result, err
 // The manifest is best-effort: a plugin the install no longer lists is still
 // named by its action namespace, and an unreadable extension table just leaves
 // repos out. Nothing here can fail.
+// resolveSettingsProfiles re-attaches the settings profile a document carried by
+// REFERENCE. Export keeps only `settingsId` and strips the resolved values
+// because they hold provider tokens (see designer.Export), while the compiler
+// reads `data.settings` and nothing else (inflow/node_builders.go). So a node
+// that arrives without this step reaches its plugin with an EMPTY settings map,
+// and the plugin correctly refuses the job on missing required fields — the
+// failure looks like a broken plugin rather than an unresolved reference.
+//
+// The editor already does this on its own import path (resolveImportedProfiles
+// in WorkflowEditorView.vue). Doing it here covers every server-side road in:
+// flo_import_workflow, the designer's flo_plan_patch / flo_apply_patch, and
+// POST /flow/import — none of which pass through the editor.
+//
+// An id this install does not have leaves the node with empty settings instead
+// of failing the import, matching how a missing plugin action is kept and
+// flagged: the operator picks a profile in the drawer.
+func resolveSettingsProfiles(ctx context.Context, store repository.Store, graph *compiler.VueFlow) {
+	cache := map[string]*models.NodeSetting{}
+	for _, n := range graph.Nodes {
+		// Data is a map, so mutating it here reaches the node in the graph even
+		// though the range variable is a copy of the struct.
+		data, ok := n.Data.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := data["settingsId"].(string)
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		prof, seen := cache[id]
+		if !seen {
+			// A lookup failure is indistinguishable from "this install has no such
+			// profile" here, and both want the same outcome: leave it for the drawer.
+			prof, _ = store.NodeSettings().GetByID(ctx, id)
+			cache[id] = prof
+		}
+		if prof == nil {
+			data["settingsName"] = ""
+			data["settings"] = map[string]any{}
+			continue
+		}
+		data["settingsName"] = prof.Title
+		settings := make(map[string]any, len(prof.Settings))
+		for k, v := range prof.Settings {
+			settings[k] = v
+		}
+		data["settings"] = settings
+	}
+}
+
 func Export(ctx context.Context, store repository.Store, rec models.FlowRecord) Document {
 	patch := designer.GraphToPatch(rec.ViewFlow)
 	title := strings.TrimSpace(rec.Title)
