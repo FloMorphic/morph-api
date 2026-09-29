@@ -39,11 +39,12 @@
     "tagline": "Call a model with tools",
     "description": "Call a language model. Its required global config comes from a settings profile (the inflowv1 plugin settings); `body` holds the prompt template. Each bound function becomes an output port the model can route through. Compiles to a Plugin node.",
     "primitives": "Plugin",
-    "dataFields": { "subject_prefix": "llm", "idle_min": 5, "request": "run", "body": { "messages": [] }, "functions": [] },
+    "dataFields": { "subject_prefix": "llm", "idle_min": 5, "request": "run", "body": { "messages": [], "clear_history": false }, "functions": [] },
     "notes": [
       "Init messages: use the shorthand `\"system\": \"…\"` and `\"prompt\": \"…\"` on `data` instead of writing body.messages by hand.",
       "Each bound function is `{ \"name\": \"snake_case_tool_name\", \"title\": \"Label\", \"description\": \"when the model should call this\", \"parameters\": { \"type\": \"object\", \"properties\": { … }, \"required\": [] } }`.",
-      "`name` is both the tool name and the route tag, `description` is what the model chooses on (always write one), `parameters` is the JSON Schema of the call arguments (flat properties only)."
+      "`name` is both the tool name and the route tag, `description` is what the model chooses on (always write one), `parameters` is the JSON Schema of the call arguments (flat properties only).",
+      "`body.clear_history` (default false): OFF the node RESUMES its conversation across runs — the init messages seed it once and later runs add no new user turn. Set it TRUE for any node inside a LOOP, or the `prompt` template is never re-evaluated after the first pass: the model answers from stale history, the conversation grows every run, and the loop cannot change its own outcome. The conversation lives on the node's scope, so it also outlives the process."
     ]
   },
   {
@@ -67,12 +68,15 @@
     "tagline": "MCP client",
     "description": "Connect to an MCP server as a client. In \"Tool only\" mode it calls a single tool; in \"With LLM\" mode it drives a model (provider config from a settings profile) that binds and calls the loaded tools internally — tool routing never surfaces as workflow edges. Connection params (URL, transport, auth) are set on the node. Compiles to a Plugin node.",
     "primitives": "Plugin",
-    "dataFields": { "subject_prefix": "mcp", "idle_min": 5, "request": "call_tool", "mcpMode": "tool", "body": { "messages": [] }, "url": "", "transport": "streamable-http", "auth": "", "functions": [], "tool": "", "arguments": {} },
+    "dataFields": { "subject_prefix": "mcp", "idle_min": 5, "request": "call_tool", "mcpMode": "tool", "body": { "messages": [], "clear_history": false, "max_tool_turns": 8 }, "url": "", "transport": "streamable-http", "auth": "", "functions": [], "tool": "", "arguments": {} },
     "notes": [
       "An MCP node runs in one of two modes; set `mcpMode` and keep `request` in step:",
       "- `mcpMode: \"tool\"` (`request: \"call_tool\"`) — tool-only, an integration: it calls ONE named tool on the server and returns its result, no model involved. Set `tool` to the tool name once its tools are loaded from the server in the app; `arguments` are shaped by that tool's input schema. Use this when the step is a single deterministic call.",
       "- `mcpMode: \"llm\"` (`request: \"run\"`) — driven by a model: it binds ALL of the server's tools and lets the model call them itself over a conversation. Seed it with the `system` / `prompt` shorthand (same as an LLM node); the provider/model come from a settings profile. Tool calls stay inside the node — they never surface as workflow edges — so this node has a single output. Use this when a task needs a model to decide which of the server's tools to call.",
-      "Either way the tool list is loaded from the server in the app, not written here; leave `functions` empty."
+      "`functions` is the tools the model MAY call — a whitelist, not a catalogue. EMPTY binds every tool the server advertises; a non-empty list binds only those names and the node REFUSES any other call at run time. Restrict it when the task is read-only and the server also offers write or shell tools. The live input schemas are re-fetched from the server each run, so only the names matter here.",
+      "`body.clear_history` (default false): OFF the node RESUMES its conversation across runs. Set it TRUE for any node inside a LOOP, or the `prompt` template is never re-evaluated after the first pass — the model answers from stale history and the loop cannot change its own outcome. The conversation lives on the node's scope, so it also outlives the process.",
+      "`body.max_tool_turns` (default 8): the cap on agentic turns, one turn being one model call plus the tools it asked for. The backend floors it at the default, so a value at or below 8 is the same as leaving it out — only a HIGHER value takes effect. Raise it for multi-step work.",
+      "In `llm` mode the node has ONE output and tool calls never become edges — do not tag the edge leaving it with tool names."
     ]
   },
   {
