@@ -76,7 +76,8 @@
       "`functions` is the tools the model MAY call — a whitelist, not a catalogue. EMPTY binds every tool the server advertises; a non-empty list binds only those names and the node REFUSES any other call at run time. Restrict it when the task is read-only and the server also offers write or shell tools. The live input schemas are re-fetched from the server each run, so only the names matter here.",
       "`body.clear_history` (default false): OFF the node RESUMES its conversation across runs. Set it TRUE for any node inside a LOOP, or the `prompt` template is never re-evaluated after the first pass — the model answers from stale history and the loop cannot change its own outcome. The conversation lives on the node's scope, so it also outlives the process.",
       "`body.max_tool_turns` (default 8): the cap on agentic turns, one turn being one model call plus the tools it asked for. The backend floors it at the default, so a value at or below 8 is the same as leaving it out — only a HIGHER value takes effect. Raise it for multi-step work.",
-      "In `llm` mode the node has ONE output and tool calls never become edges — do not tag the edge leaving it with tool names."
+      "In BOTH modes the node has ONE untagged output: it derives no ports, so tool calls never become edges and there is nothing to tag. Do not put a `port` on the edge leaving it.",
+      "Unlike an `llm` or `jev` node it has NO `_exception` port, and its single edge fires whether the call succeeded or failed. A failed node commits `{ \"error\": \"…\" }` to its `key`, so the NEXT node must test that error itself — there is no error branch to catch it."
     ]
   },
   {
