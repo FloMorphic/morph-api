@@ -209,22 +209,11 @@ func Import(ctx context.Context, store repository.Store, in Input) (*Result, err
 // The manifest is best-effort: a plugin the install no longer lists is still
 // named by its action namespace, and an unreadable extension table just leaves
 // repos out. Nothing here can fail.
-// resolveSettingsProfiles re-attaches the settings profile a document carried by
-// REFERENCE. Export keeps only `settingsId` and strips the resolved values
-// because they hold provider tokens (see designer.Export), while the compiler
-// reads `data.settings` and nothing else (inflow/node_builders.go). So a node
-// that arrives without this step reaches its plugin with an EMPTY settings map,
-// and the plugin correctly refuses the job on missing required fields — the
-// failure looks like a broken plugin rather than an unresolved reference.
-//
-// The editor already does this on its own import path (resolveImportedProfiles
-// in WorkflowEditorView.vue). Doing it here covers every server-side road in:
-// flo_import_workflow, the designer's flo_plan_patch / flo_apply_patch, and
-// POST /flow/import — none of which pass through the editor.
-//
-// An id this install does not have leaves the node with empty settings instead
-// of failing the import, matching how a missing plugin action is kept and
-// flagged: the operator picks a profile in the drawer.
+// resolveSettingsProfiles denormalizes each node's `settingsId` into
+// `data.settings`, which is the only place the compiler reads a profile from
+// (inflow/node_builders.go). Export carries the id alone, so without this a
+// node reaches its plugin with an empty settings map. Mirrors the editor's
+// resolveImportedProfiles, covering the paths that never touch the editor.
 func resolveSettingsProfiles(ctx context.Context, store repository.Store, graph *compiler.VueFlow) {
 	cache := map[string]*models.NodeSetting{}
 	for _, n := range graph.Nodes {
