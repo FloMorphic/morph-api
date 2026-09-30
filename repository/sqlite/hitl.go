@@ -72,6 +72,16 @@ func (r *humanTaskRepo) Upsert(ctx context.Context, t *models.HumanTask) error {
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal human task nexts: %w", err)
 	}
+	// The telegram binding is a nullable column in Go terms — an absent one is
+	// stored as `{}` so the NOT NULL column always holds valid JSON.
+	telegram := "{}"
+	if t.Telegram != nil {
+		b, err := json.Marshal(t.Telegram)
+		if err != nil {
+			return fmt.Errorf("sqlite: marshal human task telegram: %w", err)
+		}
+		telegram = string(b)
+	}
 
 	return r.q.UpsertHumanTask(ctx, sqlcgen.UpsertHumanTaskParams{
 		ID:         t.ID,
@@ -83,6 +93,7 @@ func (r *humanTaskRepo) Upsert(ctx context.Context, t *models.HumanTask) error {
 		ContextID:  t.ContextID,
 		Mode:       string(t.Mode),
 		Channel:    string(t.Channel),
+		Telegram:   telegram,
 		Prompt:     t.Prompt,
 		SettingsID: t.SettingsID,
 		NodeKey:    t.Key,
@@ -253,6 +264,13 @@ func humanTaskFromRow(row sqlcgen.HumanTask) (*models.HumanTask, error) {
 		if err := json.Unmarshal([]byte(row.Nexts), &rec.Nexts); err != nil {
 			return nil, fmt.Errorf("sqlite: unmarshal human task nexts for %s: %w", row.ID, err)
 		}
+	}
+	if row.Telegram != "" && row.Telegram != "{}" && row.Telegram != "null" {
+		tg := &models.TelegramBinding{}
+		if err := json.Unmarshal([]byte(row.Telegram), tg); err != nil {
+			return nil, fmt.Errorf("sqlite: unmarshal human task telegram for %s: %w", row.ID, err)
+		}
+		rec.Telegram = tg
 	}
 	return rec, nil
 }

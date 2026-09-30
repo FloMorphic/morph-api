@@ -59,14 +59,91 @@ Created only by the inflow `hitl` svc handler when a workflow reaches a
 `humanInLoop` node — **there is deliberately no create/upsert route**. `Upsert`
 lives in the repository, not the API.
 
-| Method | Path                     | Notes                                            |
-| ------ | ------------------------ | ------------------------------------------------ |
-| GET    | `/hitl`                  | `?page=1&per_page=12&search=&status=open`        |
-| GET    | `/hitl/id/:id`           | open the task (conversation)                     |
-| POST   | `/hitl/id/:id/answer`    | `{ questionId, answer }` — answers a question    |
-| POST   | `/hitl/id/:id/message`   | `{ role, text }` — appends a chat turn           |
-| POST   | `/hitl/id/:id/close`     | force-finish (workflow ends at this step)        |
-| DELETE | `/hitl/id/:id`           | —                                                |
+| Method | Path                     | Notes                                                 |
+| ------ | ------------------------ | ----------------------------------------------------- |
+| GET    | `/hitl`                  | `?page=1&per_page=12&search=&status=open&flowId=`     |
+| GET    | `/hitl/id/:id`           | open the task (conversation)                          |
+| POST   | `/hitl/id/:id/answer`    | `{ questionId, answer }` — answers a question         |
+| POST   | `/hitl/id/:id/message`   | `{ role, text }` — appends a chat turn (no bot)        |
+| POST   | `/hitl/id/:id/start`     | open the session — the bot's first turn (idempotent)  |
+| POST   | `/hitl/id/:id/chat`      | `{ text }` — send a turn, get the bot's reply         |
+| POST   | `/hitl/id/:id/close`     | finish the session; a parked flow resumes from here    |
+| DELETE | `/hitl/id/:id`           | —                                                     |
+
+#### Session channels
+
+A task's `channel` is where the conversation with the person is held. Both served
+channels run the *same* facilitator — same mission prompt, same brief, same thread
+stored on the task — so Human Tasks stays the record of the session whichever one
+delivered it, and closing a task is what releases a parked flow either way.
+
+- **`direct`** — the in-app chat. The browser drives it through `/start` and
+  `/chat` above.
+- **`telegram`** — the same conversation in a Telegram chat. The node binds a
+  Connect connection, a connected bot (`alias`) and a chat id; the bridge
+  (`inflow/hitl_telegram.go`) opens the conversation, polls the bot's updates
+  through OpenConnector and closes the task when the person replies `/done`.
+  FloMorphic holds no bot token — every Telegram call is an OpenConnector action
+  run as that connected account. `/start` and `/chat` return **409** for such a
+  task: the bridge is already driving that thread.
+- **`whatsapp`** — compiles, but has no bridge yet; such a task waits in the app.
+
+Polling rather than a webhook because FloMorphic is deployed on-prem, where
+Telegram generally cannot reach in. Note that a bot has a single update stream: do
+not point the `telegram-oc` plugin's *Get updates* action (or a webhook) at a bot
+the bridge is holding a session on, or the two consumers will steal each other's
+updates.
+
+#### Commands in a messenger session
+
+A chat has no UI, so everything the app offers around the conversation has to be
+typeable. These are handled by the bridge, never by the model — a model
+improvising a reply to `/done` would tell the person the workflow was released
+when nothing had happened. See `hitl/commands.go`.
+
+| Command   | Effect                                                                       |
+| --------- | ---------------------------------------------------------------------------- |
+| `/done`   | finish the session; for a parked flow this is what releases the run           |
+| `/status` | what has been asked and answered, read off the task record                   |
+| `/help`   | what this conversation is, and this list                                      |
+
+`/start` is accepted as an alias for `/help` — Telegram renders it as a START
+button in a fresh chat and every bot is expected to answer it — but it is not listed
+as a session control, since nothing restarts.
+
+They are **not** registered in Telegram's command menu, so they do not appear in the
+`/` autocomplete. That needs `setMyCommands`, which the gateway's telegram surface
+does not expose (`get_me`, `get_webhook_info`, `get_updates`, `get_chat`,
+`send_message`, `send_photo`, `send_document`). Verify against your own gateway with
+`GET /connect/gateway/v1/actions?service=telegram`; if it is there, registering the
+set on session open is a small addition.
+
+Until then the bridge states them itself: `hitl.OpeningFooter` is appended verbatim
+to the facilitator's first turn. The mission prompt also asks the model to mention
+`/done`, but that is a hope rather than a guarantee — and with no command menu, an
+opening turn that forgot to say it would leave the person unable to end the session
+at all.
+
+#### Telegram recipients — who a bot can be asked to talk to
+
+| Method | Path                                      | Notes                                              |
+| ------ | ----------------------------------------- | -------------------------------------------------- |
+| GET    | `/hitl/telegram/recipients`               | `?connection=&alias=` — the directory, newest first |
+| POST   | `/hitl/telegram/recipients/discover`      | `{connection, alias}` — sweep pending updates; returns `{bot, recipients}` |
+| DELETE | `/hitl/telegram/recipients/:id`           | forget one chat                                    |
+
+These serve the node's settings editor, so a designer picks a recipient instead of
+pasting a numeric chat id. They exist because **the Telegram Bot API cannot list a
+bot's users**: a bot only learns a chat exists when someone interacts with it, and
+that arrives once on an update stream that is consumed and expires in ~24h. So the
+bridge writes every chat it hears from into `telegram_recipients` — durably, where
+the stream is not — and `discover` sweeps whatever is still pending into the same
+place.
+
+`discover` reads with **no offset**, which acknowledges nothing, so it is safe to
+run while the bridge holds live sessions on that bot. The flip side is that it only
+ever sees unconsumed updates: finding nothing new is an ordinary outcome, and the
+directory it returns is still the whole answer.
 
 A task flips `open → answered` once every question has an answer; `close` sets
 `closed`. `status` filter accepts `open` / `answered` / `closed`.

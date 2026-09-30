@@ -59,6 +59,62 @@ func TestBuildHitlNodeShipsSessionConfig(t *testing.T) {
 	}
 }
 
+// A Telegram session is delivered by the bridge, which can only reach the bot the
+// node named — so the binding has to survive compilation, and the chat has to
+// survive it UNRESOLVED: the runtime fills `{{$.path}}` in the operation payload,
+// which is what lets a flow route a session to a chat it just looked up. That only
+// works because the keys are flat, so this also pins them at the top level.
+func TestBuildHitlNodeShipsTelegramBinding(t *testing.T) {
+	payload := buildHitl(t, map[string]any{
+		"channel":            "telegram",
+		"telegramConnection": "conn_1",
+		"telegramAlias":      "support-bot",
+		"telegramChatId":     "{{$.lookup.chatId}}",
+	})
+	if payload["telegramConnection"] != "conn_1" {
+		t.Fatalf("telegramConnection = %v, want conn_1", payload["telegramConnection"])
+	}
+	if payload["telegramAlias"] != "support-bot" {
+		t.Fatalf("telegramAlias = %v, want support-bot", payload["telegramAlias"])
+	}
+	if payload["telegramChatId"] != "{{$.lookup.chatId}}" {
+		t.Fatalf("telegramChatId = %v, want the unresolved variable", payload["telegramChatId"])
+	}
+}
+
+// Empty means "the default" for the connection and the bot, and the handler reads
+// an absent key exactly that way — so shipping empty strings would only add noise
+// to every payload.
+func TestBuildHitlNodeOmitsEmptyTelegramFields(t *testing.T) {
+	payload := buildHitl(t, map[string]any{
+		"channel":            "telegram",
+		"telegramConnection": "",
+		"telegramAlias":      "",
+		"telegramChatId":     "123456789",
+	})
+	for _, k := range []string{"telegramConnection", "telegramAlias"} {
+		if _, ok := payload[k]; ok {
+			t.Fatalf("%s was shipped empty: %+v", k, payload)
+		}
+	}
+	if payload["telegramChatId"] != "123456789" {
+		t.Fatalf("telegramChatId = %v, want 123456789", payload["telegramChatId"])
+	}
+}
+
+// A binding left on a node whose channel was switched back to the in-app chat must
+// not travel: the handler would record a Telegram delivery the flow no longer asked
+// for, and the bridge would start talking to that chat.
+func TestBuildHitlNodeDropsTelegramBindingOffChannel(t *testing.T) {
+	payload := buildHitl(t, map[string]any{
+		"channel":        "direct",
+		"telegramChatId": "123456789",
+	})
+	if _, ok := payload["telegramChatId"]; ok {
+		t.Fatalf("a Telegram chat was shipped for a direct session: %+v", payload)
+	}
+}
+
 // A node authored before mode/channel existed must compile to the behaviour it
 // has always had rather than to an empty string the handler would have to guess
 // at: park, answered in the app.

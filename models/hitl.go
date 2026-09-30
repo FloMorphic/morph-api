@@ -47,10 +47,17 @@ const (
 	HumanTaskContinue HumanTaskMode = "continue"
 )
 
-// HumanTaskChannel is where the conversation with the person is held. Only
-// `direct` (the in-app chat) is served today; the messenger channels are
-// recorded so a flow can already declare its intent, but need a provider
-// integration before a session is delivered on them.
+// HumanTaskChannel is where the conversation with the person is held. `direct`
+// (the in-app chat under Operate -> Human Tasks) and `telegram` (the same
+// facilitator conversation, delivered to a Telegram chat through OpenConnector —
+// see TelegramBinding) are served end to end. `whatsapp` is recorded so a flow
+// can already declare its intent, but needs a provider integration before a
+// session is delivered on it.
+//
+// The channel only moves the conversation: whatever it is, the task is recorded
+// here and listed under Human Tasks, and closing it is what releases a parked
+// flow. A messenger channel mirrors every turn onto the task, so the in-app view
+// stays the record of what was said.
 type HumanTaskChannel string
 
 const (
@@ -58,6 +65,40 @@ const (
 	HumanTaskTelegram HumanTaskChannel = "telegram"
 	HumanTaskWhatsapp HumanTaskChannel = "whatsapp"
 )
+
+// TelegramBinding is a `telegram` task's delivery binding plus the small bit
+// of runtime state the bridge keeps on it.
+//
+// FloMorphic holds no bot token: the bot is an account connected in
+// OpenConnector (oomol's hosted gateway or a self-hosted one), reached through
+// the stored Connect connection. So a Telegram HITL node names three things —
+// which Connect connection, which connected bot on it, and which chat to talk
+// to — and every Telegram call the bridge makes is an OpenConnector action run
+// as that account.
+//
+// Connection / Alias / ChatID are design-time config carried in the node's `op`
+// payload (ChatID may be written as a `{{$.path}}` and arrives resolved, so a
+// flow can route the session to whoever it just looked up). Cursor / Opened are
+// written by the bridge as the session runs.
+type TelegramBinding struct {
+	// Connection is the Connect connection id whose gateway holds the bot, or
+	// empty for the default connection.
+	Connection string `json:"connection,omitempty"`
+	// Alias selects the connected Telegram account on that gateway (the `alias`
+	// GET /v1/connections reports). Empty means the gateway's default account.
+	Alias string `json:"alias,omitempty"`
+	// ChatID is the Telegram chat the session is held in — a numeric chat id or
+	// an `@channelusername`.
+	ChatID string `json:"chatId,omitempty"`
+	// Cursor is the highest Telegram update id the bridge has consumed for this
+	// account. It is the resume point after a restart, and it is set when the
+	// session opens (to the account's newest update) so a session never replays
+	// messages that predate it.
+	Cursor int64 `json:"cursor,omitempty"`
+	// Opened records that the facilitator's first turn was delivered to the chat,
+	// so the bridge opens each session exactly once.
+	Opened bool `json:"opened,omitempty"`
+}
 
 // HumanTaskMessage is one turn of the free-form chat thread the human uses to
 // understand the task's context. The LLM assistant reply is produced on the
@@ -92,6 +133,9 @@ type HumanTask struct {
 	// in the extrinsic's `op` payload.
 	Mode    HumanTaskMode    `json:"mode,omitempty"`
 	Channel HumanTaskChannel `json:"channel,omitempty"`
+	// Telegram is set when Channel is `telegram`: the bot/chat the session is
+	// delivered to, and the bridge's own cursor over that bot's updates.
+	Telegram *TelegramBinding `json:"telegram,omitempty"`
 	// Prompt is the conversation opener, ready to show a person: the node writes
 	// it with `{{$.path}}` variables and the runtime resolves them against the
 	// run's context before the svc handler is called, so what lands here is the

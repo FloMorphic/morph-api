@@ -119,6 +119,12 @@ func connectInflowWithRetry(ctx context.Context, store repository.Store) {
 	// starts a fresh run each time one comes due. Distinct from the process
 	// scheduler above (which resumes one-shot parked runs).
 	inflow.StartTriggerScheduler(ctx, store)
+
+	// HITL Telegram bridge: holds a Human-in-the-Loop session in a Telegram chat
+	// instead of the app — it opens the conversation, polls the bot's updates
+	// through OpenConnector, and closes the task (releasing a parked flow) when the
+	// person is done. Idle and silent unless a flow parks on a Telegram HITL node.
+	inflow.StartHitlTelegramBridge(ctx, store)
 }
 
 // reloadResourcesWithRetry re-reads infra's engine list, with the same capped

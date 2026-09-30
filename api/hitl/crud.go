@@ -1,9 +1,11 @@
 package hitlControllers
 
 import (
+	"log"
 	"strings"
 
 	"github.com/FloMorphic/morph-api/etc"
+	"github.com/FloMorphic/morph-api/hitl"
 	"github.com/FloMorphic/morph-api/inflow"
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
@@ -130,6 +132,16 @@ func (ctl *controller) close(c fiber.Ctx) error {
 	// does not block the close or the resume.
 	if err := inflow.WriteHumanTaskContext(c.Context(), ctl.store, rec); err != nil {
 		return etc.Send(c, fiber.StatusBadGateway, rec, err.Error())
+	}
+	// A session held in a messenger was closed from the app, so the person is
+	// still sitting in a chat waiting for the bot. Tell them it is over. A failed
+	// send is logged, never fatal: the task IS closed, and the flow below must be
+	// released either way.
+	if rec.Channel == models.HumanTaskTelegram && rec.Telegram != nil {
+		if err := hitl.TelegramSendMessage(c.Context(), ctl.store, rec.Telegram,
+			"This session was closed from FloMorphic. Thanks — nothing more is needed here."); err != nil {
+			log.Printf("hitl: notify telegram chat %s of close: %v", rec.Telegram.ChatID, err)
+		}
 	}
 	if _, err := inflow.ResumeHumanTask(c.Context(), ctl.store, rec); err != nil {
 		// The session is closed either way — report the failed resume, but hand

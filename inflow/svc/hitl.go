@@ -33,7 +33,13 @@ type hitlPayload struct {
 	Mode string `json:"mode"`
 	// Channel is where the conversation is held: direct / telegram / whatsapp.
 	Channel string `json:"channel"`
-	Prompt  string `json:"prompt"`
+	// The `telegram` channel's delivery binding, carried flat (see buildHitlNode)
+	// so the runtime's `{{$.path}}` resolution reaches TelegramChatID — a flow can
+	// route the session to a chat id it worked out on the way here.
+	TelegramConnection string `json:"telegramConnection"`
+	TelegramAlias      string `json:"telegramAlias"`
+	TelegramChatID     string `json:"telegramChatId"`
+	Prompt             string `json:"prompt"`
 	// SettingsID is the node-settings profile holding the chat bot's LLM provider
 	// config; the chat service reads it by id at run time. Key is the node's
 	// result binding — closing the session writes the outcome into context under
@@ -101,6 +107,20 @@ func HandleHumanTask(store repository.Store, header nats.Header, data []byte) ([
 		channel = models.HumanTaskDirect
 	}
 
+	// A telegram task carries its delivery binding; the bridge fills the rest
+	// (cursor / opened) as it runs the session. A re-entry of the same node keeps
+	// the binding it is recorded with here — the id is deterministic per
+	// (process, node), so the row is the same task and the bridge's own state on
+	// it is preserved below.
+	var telegram *models.TelegramBinding
+	if channel == models.HumanTaskTelegram {
+		telegram = &models.TelegramBinding{
+			Connection: strings.TrimSpace(req.TelegramConnection),
+			Alias:      strings.TrimSpace(req.TelegramAlias),
+			ChatID:     strings.TrimSpace(req.TelegramChatID),
+		}
+	}
+
 	// Capture the node's outbound edges so a future run can resume the flow from
 	// exactly these nexts (we tell the runtime to stop after this node below).
 	var nexts []inflowModels.Next
@@ -121,6 +141,7 @@ func HandleHumanTask(store repository.Store, header nats.Header, data []byte) ([
 		ContextID: contextID,
 		Mode:      mode,
 		Channel:   channel,
+		Telegram:  telegram,
 		// Already resolved by the runtime (see hitlPayload).
 		Prompt: req.Prompt,
 		// The chat bot's provider profile and the node's result key, carried from
@@ -134,6 +155,16 @@ func HandleHumanTask(store repository.Store, header nats.Header, data []byte) ([
 		// The main scoped data at the moment the flow parked, kept for traceability.
 		Data:  scopedDataMap(body.Data),
 		Nexts: nexts,
+	}
+	// Carry the bridge's own state forward if this task already exists (a node
+	// re-entry upserts the same deterministic id): the design-time binding is
+	// re-read from the node, but the update cursor and the "session opened" flag
+	// belong to the live conversation and must not be reset under it.
+	if telegram != nil && task.ID != "" {
+		if prev, err := store.HumanTasks().GetByID(context.Background(), task.ID); err == nil && prev.Telegram != nil {
+			telegram.Cursor = prev.Telegram.Cursor
+			telegram.Opened = prev.Telegram.Opened
+		}
 	}
 	if err := store.HumanTasks().Upsert(context.Background(), task); err != nil {
 		return nil, fmt.Errorf("record human task: %w", err)

@@ -33,6 +33,7 @@ type Querier interface {
 	DeletePluginActions(ctx context.Context, pluginID string) (int64, error)
 	DeleteProcess(ctx context.Context, indexID int64) (int64, error)
 	DeletePrompt(ctx context.Context, id string) (int64, error)
+	DeleteTelegramRecipient(ctx context.Context, id string) (int64, error)
 	DeleteTrigger(ctx context.Context, id string) (int64, error)
 	DeleteWorkflow(ctx context.Context, id string) (int64, error)
 	GetBuiltinByName(ctx context.Context, name string) (Extension, error)
@@ -64,6 +65,7 @@ type Querier interface {
 	ListPluginActions(ctx context.Context, pluginID string) ([]Extension, error)
 	ListProcesses(ctx context.Context, arg ListProcessesParams) ([]Process, error)
 	ListPrompts(ctx context.Context, arg ListPromptsParams) ([]Prompt, error)
+	ListTelegramRecipients(ctx context.Context, arg ListTelegramRecipientsParams) ([]TelegramRecipient, error)
 	ListTriggers(ctx context.Context, arg ListTriggersParams) ([]Trigger, error)
 	ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]Workflow, error)
 	SetConnectDefault(ctx context.Context, arg SetConnectDefaultParams) (int64, error)
@@ -75,6 +77,7 @@ type Querier interface {
 	UpsertHumanTask(ctx context.Context, arg UpsertHumanTaskParams) error
 	UpsertNodeSetting(ctx context.Context, arg UpsertNodeSettingParams) error
 	UpsertPrompt(ctx context.Context, arg UpsertPromptParams) error
+	UpsertTelegramRecipient(ctx context.Context, arg UpsertTelegramRecipientParams) error
 	UpsertTrigger(ctx context.Context, arg UpsertTriggerParams) error
 	UpsertWorkflow(ctx context.Context, arg UpsertWorkflowParams) error
 }

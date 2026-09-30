@@ -52,7 +52,14 @@ func LoadSvcNodehandlers(store repository.Store) error {
 	// a `stop` command so the runtime parks the flow until a resume run restarts
 	// from the captured nexts.
 	if err := svcHandler.ImplHandlerOnSubject(SvcHitl, svcHandler.SvcTopic(HitlSubject), func(header nats.Header, data []byte) ([]byte, error) {
-		return svc.HandleHumanTask(store, header, data)
+		reply, err := svc.HandleHumanTask(store, header, data)
+		// A task on a messenger channel has to be *delivered*, not waited for. The
+		// nudge is unconditional (the handler does not report the channel back) and
+		// cheap: the bridge wakes, finds nothing to open unless a Telegram task is
+		// live, and sleeps again. Done here rather than inside the handler because
+		// inflow/svc must not import the runtime that owns the bridge.
+		NotifyHitlTelegram()
+		return reply, err
 	}); err != nil {
 		return fmt.Errorf("failed to create hitl service node : %v", err)
 	}

@@ -322,7 +322,21 @@ func buildHitlNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData m
 		}
 	}
 	payload["mode"] = hitlMode(getStr(nodeData, "mode"))
-	payload["channel"] = hitlChannel(getStr(nodeData, "channel"))
+	channel := hitlChannel(getStr(nodeData, "channel"))
+	payload["channel"] = channel
+	// A `telegram` session is delivered through OpenConnector, so the node names
+	// the Connect connection, the connected bot on it, and the chat to talk to.
+	// They travel as FLAT top-level payload keys (not a nested object) for the
+	// same reason `prompt` does: the runtime resolves `{{$.path}}` variables in
+	// the operation payload, so a flow can route the session to a chat id it just
+	// looked up — `telegramChatId` arrives as the resolved number.
+	if channel == string(models.HumanTaskTelegram) {
+		for _, k := range []string{"telegramConnection", "telegramAlias", "telegramChatId"} {
+			if v := getStr(nodeData, k); v != "" {
+				payload[k] = v
+			}
+		}
+	}
 	// settingsId points at the provider profile the chat service reads at run
 	// time (the token stays in the settings store, never in the flow graph); key
 	// is the node's result binding, so closing the session can write the
@@ -349,8 +363,10 @@ func hitlMode(v string) string {
 	return string(models.HumanTaskPark)
 }
 
-// hitlChannel narrows the node's `channel`, defaulting to the in-app chat — the
-// only one served end to end today.
+// hitlChannel narrows the node's `channel`, defaulting to the in-app chat. Only
+// `direct` and `telegram` are served end to end; `whatsapp` still compiles (so a
+// flow can declare the intent) but the bridge that would deliver it does not
+// exist yet, and such a task simply waits in the app like a `direct` one.
 func hitlChannel(v string) string {
 	switch models.HumanTaskChannel(v) {
 	case models.HumanTaskTelegram, models.HumanTaskWhatsapp:

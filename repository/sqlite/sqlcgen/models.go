@@ -63,6 +63,7 @@ type HumanTask struct {
 	SettingsID string
 	NodeKey    string
 	InstanceID string
+	Telegram   string
 	Questions  string
 	Messages   string
 	Data       string
@@ -124,6 +125,21 @@ type Prompt struct {
 	Tags        string
 	CreatedAt   int64
 	UpdatedAt   int64
+}
+
+type TelegramRecipient struct {
+	ID         string
+	Connection string
+	Alias      string
+	ChatID     string
+	Type       string
+	Title      string
+	Username   string
+	FirstName  string
+	LastName   string
+	LastSeenAt int64
+	CreatedAt  int64
+	UpdatedAt  int64
 }
 
 type Trigger struct {

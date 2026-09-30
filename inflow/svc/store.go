@@ -22,10 +22,10 @@ import (
 // `partition` — a per-record namespace/tag an index stamps on the record and a
 // search restricts its top-k to.
 type storeRequest struct {
-	Action    string `json:"action"`
-	StoreID   string `json:"storeId"`
-	Query     string `json:"query"`
-	Input     any    `json:"input"`
+	Action    string  `json:"action"`
+	StoreID   string  `json:"storeId"`
+	Query     string  `json:"query"`
+	Input     any     `json:"input"`
 	Key       string  `json:"key"`
 	Text      string  `json:"text"`
 	TopK      int     `json:"topK"`

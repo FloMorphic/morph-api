@@ -16,7 +16,7 @@ func TestStoreMetaPayload(t *testing.T) {
 			map[string]any{"key": "x", "value": "{{$.data.point.x}}"},
 			map[string]any{"key": "", "value": "dropped"}, // blank key
 			map[string]any{"value": "no key"},             // missing key
-			"not a row",                                    // ignored
+			"not a row",                                   // ignored
 		}
 		got := storeMetaPayload(raw)
 		want := map[string]any{

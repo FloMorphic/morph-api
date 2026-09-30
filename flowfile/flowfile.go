@@ -209,11 +209,31 @@ func Import(ctx context.Context, store repository.Store, in Input) (*Result, err
 // The manifest is best-effort: a plugin the install no longer lists is still
 // named by its action namespace, and an unreadable extension table just leaves
 // repos out. Nothing here can fail.
+// referenceOnlySettings lists the node kinds that bind a settings profile BY ID
+// ONLY — the profile's values must never be copied onto the node.
+//
+// The distinction is where the profile is read. A plugin-lowered node has its
+// settings shipped to the plugin as part of the compiled body, so the values have
+// to be on the node. The HITL node does not: it compiles to an Extrinsic, and the
+// backend chat service loads the profile from the store by id at conversation time
+// (see hitl.ChatConfig). Copying the values onto it would achieve nothing except
+// to write a provider access token into the saved graph.
+//
+// This mirrors the editor, which has always excluded these (see the web app's
+// NodeSettingsSelector `referenceOnly`). Import did not, so an imported HITL node
+// stored the token the editor was careful to keep out.
+var referenceOnlySettings = map[string]bool{
+	inflow.NODE_HITL: true,
+}
+
 // resolveSettingsProfiles denormalizes each node's `settingsId` into
-// `data.settings`, which is the only place the compiler reads a profile from
+// `data.settings`, which is where the compiler reads a plugin node's profile from
 // (inflow/node_builders.go). Export carries the id alone, so without this a
 // node reaches its plugin with an empty settings map. Mirrors the editor's
 // resolveImportedProfiles, covering the paths that never touch the editor.
+//
+// A reference-only kind gets its label resolved and nothing else — see
+// referenceOnlySettings.
 func resolveSettingsProfiles(ctx context.Context, store repository.Store, graph *compiler.VueFlow) {
 	cache := map[string]*models.NodeSetting{}
 	for _, n := range graph.Nodes {
@@ -228,6 +248,14 @@ func resolveSettingsProfiles(ctx context.Context, store repository.Store, graph 
 		if id == "" {
 			continue
 		}
+		// Strip a reference-only node's values up front, before anything is looked
+		// up. Doing it here rather than on each outcome means no path through the
+		// rest of this function can leave values behind — including the ones a
+		// hand-written or third-party document arrived carrying.
+		refOnly := referenceOnlySettings[n.Type]
+		if refOnly {
+			delete(data, "settings")
+		}
 		prof, seen := cache[id]
 		if !seen {
 			// A lookup failure is indistinguishable from "this install has no such
@@ -237,10 +265,18 @@ func resolveSettingsProfiles(ctx context.Context, store repository.Store, graph 
 		}
 		if prof == nil {
 			data["settingsName"] = ""
-			data["settings"] = map[string]any{}
+			if !refOnly {
+				// An empty map, not a missing key: it tells the compiler the binding was
+				// seen and resolved to nothing, rather than never existing.
+				data["settings"] = map[string]any{}
+			}
 			continue
 		}
+		// The label is the only thing a reference-only node takes from its profile.
 		data["settingsName"] = prof.Title
+		if refOnly {
+			continue
+		}
 		settings := make(map[string]any, len(prof.Settings))
 		for k, v := range prof.Settings {
 			settings[k] = v

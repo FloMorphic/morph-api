@@ -13,7 +13,7 @@ const (
 	// just void , contract, goto , nativley comes from inflow , others compiled to inflow native
 	NODE_VOID     = "void"
 	NODE_CONTRACT = "contract"
-	NODE_GOTO = "goto"
+	NODE_GOTO     = "goto"
 
 	// FloMorphic builtin morphic types (see models/extension.go). Each lowers to
 	// an inflow primitive below.

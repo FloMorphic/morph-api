@@ -18,11 +18,11 @@ WHERE (@search = '' OR title LIKE '%' || @search || '%')
 -- name: UpsertHumanTask :exec
 INSERT INTO human_tasks (
     id, title, status, pid, instance_id, flow_id, node_id, context_id,
-    mode, channel, prompt, settings_id, node_key,
+    mode, channel, telegram, prompt, settings_id, node_key,
     questions, messages, data, nexts, created_at, updated_at, closed_at
 ) VALUES (
     @id, @title, @status, @pid, @instance_id, @flow_id, @node_id, @context_id,
-    @mode, @channel, @prompt, @settings_id, @node_key,
+    @mode, @channel, @telegram, @prompt, @settings_id, @node_key,
     @questions, @messages, @data, @nexts, @created_at, @updated_at, @closed_at
 )
 ON CONFLICT(id) DO UPDATE SET
@@ -35,6 +35,7 @@ ON CONFLICT(id) DO UPDATE SET
     context_id = excluded.context_id,
     mode = excluded.mode,
     channel = excluded.channel,
+    telegram = excluded.telegram,
     prompt = excluded.prompt,
     settings_id = excluded.settings_id,
     node_key = excluded.node_key,

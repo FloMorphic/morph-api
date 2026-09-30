@@ -52,6 +52,7 @@ type store struct {
 	extensions   *extensionRepo
 	triggers     *triggerRepo
 	connect      *connectRepo
+	tgRecipients *telegramRecipientRepo
 }
 
 // Open connects to the sqlite database at source (a file path for sqlite),
@@ -100,6 +101,7 @@ func Open(source string) (repository.Store, error) {
 		extensions:   &extensionRepo{q: q},
 		triggers:     &triggerRepo{q: q},
 		connect:      &connectRepo{q: q},
+		tgRecipients: &telegramRecipientRepo{q: q},
 	}
 
 	// Seed builtin palette nodes on first run (idempotent, keyed by name). A
@@ -159,7 +161,10 @@ func (s *store) Connect() repository.ConnectRepository          { return s.conne
 func (s *store) Processes() repository.ProcessRepository        { return s.processes }
 func (s *store) Extensions() repository.ExtensionRepository     { return s.extensions }
 func (s *store) Triggers() repository.TriggerRepository         { return s.triggers }
-func (s *store) Close() error                                   { return s.db.Close() }
+func (s *store) TelegramRecipients() repository.TelegramRecipientRepository {
+	return s.tgRecipients
+}
+func (s *store) Close() error { return s.db.Close() }
 
 // applyMigrations runs additive, idempotent schema changes that cannot live in
 // schema.sql. `CREATE TABLE IF NOT EXISTS` never alters a table that already
@@ -182,6 +187,7 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE human_tasks ADD COLUMN settings_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE human_tasks ADD COLUMN node_key TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE human_tasks ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE human_tasks ADD COLUMN telegram TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE processes ADD COLUMN instance_id TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE processes ADD COLUMN snapshot TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE processes ADD COLUMN errors TEXT NOT NULL DEFAULT '{}'`,

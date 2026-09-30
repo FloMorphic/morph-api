@@ -247,6 +247,23 @@ type ConnectRepository interface {
 	SetDefault(ctx context.Context, id string) error
 }
 
+// TelegramRecipientRepository stores the chats a Telegram bot is known to be able
+// to reach, so a Human-in-the-Loop node can offer a recipient to pick instead of a
+// numeric chat id to paste. It is a durable stand-in for an API that does not
+// exist: a Telegram bot cannot list its users, it only learns a chat exists when
+// someone interacts with it, and the update stream that carries that is consumed
+// and expires. Written by the HITL Telegram bridge and by the discovery action.
+//
+// Rows are scoped per (connection, alias) — a chat id only means something to the
+// bot that saw it. Upsert derives the id from that scope plus the chat id, so
+// re-seeing a chat refreshes its row rather than duplicating it.
+type TelegramRecipientRepository interface {
+	Upsert(ctx context.Context, rec *models.TelegramRecipient) error
+	// List returns one bot's recipients, most recently heard from first.
+	List(ctx context.Context, connection, alias string, limit int) ([]models.TelegramRecipient, error)
+	Delete(ctx context.Context, id string) error
+}
+
 // Store aggregates the per-entity repositories behind one handle and owns the
 // underlying connection lifecycle.
 type Store interface {
@@ -260,6 +277,7 @@ type Store interface {
 	Extensions() ExtensionRepository
 	Triggers() TriggerRepository
 	Connect() ConnectRepository
+	TelegramRecipients() TelegramRecipientRepository
 	Close() error
 }
 
