@@ -89,7 +89,12 @@ delivered it, and closing a task is what releases a parked flow either way.
 - **`whatsapp`** — compiles, but has no bridge yet; such a task waits in the app.
 
 Polling rather than a webhook because FloMorphic is deployed on-prem, where
-Telegram generally cannot reach in. Note that a bot has a single update stream: do
+Telegram generally cannot reach in. The rate follows the conversation rather than a
+fixed cadence (`pollLadder`): 2s while someone is talking, backing off to 30s while
+a session sits waiting on a person — which is most of its life, since waiting on a
+person is what the node is for. With no Telegram task open the bridge makes **no
+gateway calls at all**; it only re-reads the task table every 20s, and a flow
+parking on a Telegram node nudges it awake immediately. Note that a bot has a single update stream: do
 not point the `telegram-oc` plugin's *Get updates* action (or a webhook) at a bot
 the bridge is holding a session on, or the two consumers will steal each other's
 updates.

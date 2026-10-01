@@ -40,10 +40,14 @@ import (
 // webhook), the two consumers steal each other's updates — that is Telegram's
 // design, not ours. Give a HITL bot to the bridge alone.
 const (
-	// hitlTelegramTick is the poll interval while at least one Telegram session is
-	// live. Two seconds reads as immediate in a chat and costs ~30 gateway calls a
-	// minute per bound bot, well inside Telegram's limits.
-	hitlTelegramTick = 2 * time.Second
+	// hitlTelegramFastest is the poll interval while a conversation is actually
+	// moving. Two seconds reads as immediate in a chat.
+	hitlTelegramFastest = 2 * time.Second
+	// hitlTelegramSlowest is where the ladder below bottoms out: a session that has
+	// been silent for half an hour. The person has plainly gone elsewhere, so half a
+	// minute to notice their reply is imperceptible — and it is the rate that decides
+	// what a session left open overnight costs.
+	hitlTelegramSlowest = 30 * time.Second
 	// hitlTelegramIdle is the sleep when no Telegram session is open. Nothing is
 	// polled then — the loop only re-checks the task table.
 	hitlTelegramIdle = 20 * time.Second
@@ -55,6 +59,34 @@ const (
 	hitlTaskScan = 100
 )
 
+// pollLadder backs off the poll rate as a session goes quiet.
+//
+// A flat rate is wrong for this in both directions, because a Human-in-the-Loop
+// conversation is not steady traffic: it is short bursts of replies separated by
+// long silence, and the silence is the POINT — waiting on a person is what the node
+// is for. Polling every two seconds for the whole of it means a session parked on a
+// Friday costs ~110,000 gateway calls by Monday, essentially all of them returning
+// an empty list. Polling slowly throughout would instead make an active
+// back-and-forth feel broken.
+//
+// So the rate follows the conversation: fast while someone is talking, backing off
+// to hitlTelegramSlowest while nobody is. The same weekend costs ~7,000 calls, and a
+// live exchange still turns around in two seconds.
+//
+// The ladder is read in order; the first step whose `quietFor` the session is still
+// inside wins.
+var pollLadder = []struct {
+	quietFor time.Duration
+	every    time.Duration
+}{
+	// Just said something — a reply is likely imminent.
+	{quietFor: time.Minute, every: hitlTelegramFastest},
+	// Still plausibly at their phone, composing.
+	{quietFor: 5 * time.Minute, every: 5 * time.Second},
+	// Drifted off, but recently enough to come back to it.
+	{quietFor: 30 * time.Minute, every: 15 * time.Second},
+}
+
 // HitlTelegramBridge runs the poll loop. There is one per process, started from
 // app.go after the inflow backend is up — closing a session resumes a parked
 // flow, which needs the runtime.
@@ -64,6 +96,12 @@ type HitlTelegramBridge struct {
 	// Telegram node nudges the loop so the person hears from the bot now rather
 	// than up to hitlTelegramIdle later. Many nudges collapse into one pass.
 	wake chan struct{}
+	// lastActivity is when a live session last showed signs of life — the bot asked
+	// something, or a person answered. It drives pollLadder. It is deliberately
+	// global rather than per bot: the loop is a single goroutine with one sleep, so
+	// there is only one rate to choose, and on a single-tenant install the bots are
+	// few. Only the loop goroutine touches it.
+	lastActivity time.Time
 	// warned remembers the last problem reported per task, so a failure that
 	// repeats every tick is surfaced once rather than every two seconds — and a
 	// DIFFERENT failure on the same task still gets through. Only the loop
@@ -103,7 +141,7 @@ func (b *HitlTelegramBridge) run(ctx context.Context) {
 		live := b.pass(ctx)
 		delay := hitlTelegramIdle
 		if live {
-			delay = hitlTelegramTick
+			delay = b.pollDelay()
 		}
 		timer := time.NewTimer(delay)
 		select {
@@ -138,6 +176,18 @@ func (b *HitlTelegramBridge) pass(ctx context.Context) bool {
 	if len(deliverable) == 0 {
 		return false
 	}
+	// On the first pass after a restart there is no in-memory activity to go on, so
+	// take it from the sessions themselves: a task touched ten seconds ago resumes at
+	// the fast rate, one untouched for three days resumes at the slow one. Guessing
+	// "active" instead would poll every two seconds for every stale session the
+	// install has ever parked.
+	if b.lastActivity.IsZero() {
+		for _, task := range deliverable {
+			if at := time.UnixMilli(task.UpdatedAt); at.After(b.lastActivity) {
+				b.lastActivity = at
+			}
+		}
+	}
 
 	// Sessions that have never spoken: deliver the facilitator's opening turn.
 	for _, task := range deliverable {
@@ -148,6 +198,8 @@ func (b *HitlTelegramBridge) pass(ctx context.Context) bool {
 			b.report(task, "could not be delivered", err)
 			continue
 		}
+		// A question was just put to someone: poll fast, they may answer at once.
+		b.touch()
 		b.clearWarning(task.ID)
 	}
 
@@ -346,6 +398,9 @@ func (b *HitlTelegramBridge) drain(ctx context.Context, group accountGroup) erro
 		if task == nil {
 			continue
 		}
+		// Someone answered. Whether the turn then succeeds or fails, the session is
+		// live, so go back to the fast rate.
+		b.touch()
 		if err := b.handleUpdate(ctx, task, up); err != nil {
 			b.report(task, fmt.Sprintf("failed on update %d", up.UpdateID), err)
 			continue
@@ -532,6 +587,23 @@ func (b *HitlTelegramBridge) finish(ctx context.Context, task *models.HumanTask)
 		return hitl.TelegramSendMessage(ctx, b.store, task.Telegram,
 			"Thanks — that is everything I needed. Your answers are recorded and we are done here.")
 	}
+}
+
+// touch marks a live session as active, which resets the poll rate to the fastest
+// rung of pollLadder.
+func (b *HitlTelegramBridge) touch() { b.lastActivity = time.Now() }
+
+// pollDelay picks the next poll interval from how long the conversation has been
+// quiet. See pollLadder for why the rate follows the conversation rather than a
+// fixed cadence.
+func (b *HitlTelegramBridge) pollDelay() time.Duration {
+	quiet := time.Since(b.lastActivity)
+	for _, step := range pollLadder {
+		if quiet < step.quietFor {
+			return step.every
+		}
+	}
+	return hitlTelegramSlowest
 }
 
 // report surfaces a problem with one session: logged for the operator's terminal

@@ -2,6 +2,7 @@ package inflow
 
 import (
 	"testing"
+	"time"
 
 	"github.com/FloMorphic/morph-api/hitl"
 	"github.com/FloMorphic/morph-api/models"
@@ -115,5 +116,61 @@ func TestGroupByAccount(t *testing.T) {
 	// something other than an empty string in the loop's log lines.
 	if got := groups[2].label(); got != "default bot" {
 		t.Fatalf("unaliased group label = %q, want %q", got, "default bot")
+	}
+}
+
+// The poll rate has to follow the conversation, because a HITL session spends most
+// of its life waiting on a person: a flat two seconds would spend ~110,000 gateway
+// calls on a session parked over a weekend, essentially all of them empty.
+func TestPollDelayBacksOffAsTheSessionGoesQuiet(t *testing.T) {
+	b := &HitlTelegramBridge{}
+	cases := []struct {
+		quiet time.Duration
+		want  time.Duration
+	}{
+		{quiet: 0, want: hitlTelegramFastest},
+		{quiet: 30 * time.Second, want: hitlTelegramFastest},
+		{quiet: 2 * time.Minute, want: 5 * time.Second},
+		{quiet: 10 * time.Minute, want: 15 * time.Second},
+		{quiet: time.Hour, want: hitlTelegramSlowest},
+		{quiet: 72 * time.Hour, want: hitlTelegramSlowest},
+	}
+	for _, tc := range cases {
+		b.lastActivity = time.Now().Add(-tc.quiet)
+		if got := b.pollDelay(); got != tc.want {
+			t.Fatalf("quiet for %s ⇒ %s, want %s", tc.quiet, got, tc.want)
+		}
+	}
+}
+
+// Someone answering, or the bot putting a question to them, means the session is
+// live again — the next poll must go back to the fast rate however long it had been
+// backing off, or a reply to a stale session would be met with a 30s lag for the
+// rest of the conversation.
+func TestTouchReturnsToTheFastRate(t *testing.T) {
+	b := &HitlTelegramBridge{lastActivity: time.Now().Add(-2 * time.Hour)}
+	if b.pollDelay() != hitlTelegramSlowest {
+		t.Fatalf("a two-hour-quiet session is not at the slow rate")
+	}
+	b.touch()
+	if got := b.pollDelay(); got != hitlTelegramFastest {
+		t.Fatalf("after touch() the rate is %s, want %s", got, hitlTelegramFastest)
+	}
+}
+
+// The ladder is read in order and must stay ordered, or a later, looser rung would
+// shadow a tighter one and the backoff would not be monotonic.
+func TestPollLadderIsOrdered(t *testing.T) {
+	for i := 1; i < len(pollLadder); i++ {
+		if pollLadder[i].quietFor <= pollLadder[i-1].quietFor {
+			t.Fatalf("pollLadder step %d does not widen its window: %+v", i, pollLadder)
+		}
+		if pollLadder[i].every <= pollLadder[i-1].every {
+			t.Fatalf("pollLadder step %d does not slow down: %+v", i, pollLadder)
+		}
+	}
+	// The last rung must be faster than the floor, or the floor is unreachable.
+	if last := pollLadder[len(pollLadder)-1].every; last >= hitlTelegramSlowest {
+		t.Fatalf("last rung %s is not faster than the floor %s", last, hitlTelegramSlowest)
 	}
 }
