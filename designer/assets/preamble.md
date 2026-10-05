@@ -51,7 +51,7 @@ Scoping a node over a collection is the right tool whenever every element needs 
 It breaks down only when the node's OUTGOING EDGE depends on its result, because a node has ONE set of edges for the whole node — there is no per-element edge to carry a second answer.
 Whenever that happens the runtime STOPS at the first element that picks a branch: the remaining elements are never processed, and it logs a warning saying how many were skipped. So a many-scope on such a node does not iterate — it quietly becomes "run the first one, then decide".
 This is not an LLM quirk. It applies to every node whose ports are derived from its result:
-- Plugin-backed nodes — `llm`, `jev`, `mcp`, `cast`, `http` and an imported `plugin` action are ALL the same Plugin primitive underneath, and any of them can route at run time by firing tags. The visible signal is `functions` (LLM), `questions` with routed options (Jev) or `outbound` (plugin action).
+- Plugin-backed nodes — `llm`, `ai-decision`, `mcp`, `cast`, `http` and an imported `plugin` action are ALL the same Plugin primitive underneath, and any of them can route at run time by firing tags. The visible signal is `functions` (LLM), `questions` with routed options (AI Decision) or `outbound` (plugin action).
 - `rule` nodes, whose `handlers` are the branches the contract chooses between.
 So: give any node whose ports are derived — a plugin node with `functions`/`questions`/`outbound`, a Rule node with `handlers` — a single-valued `scope` (usually `$`).
 When per-element work feeds a SINGLE decision made AFTER the whole collection, that is TWO nodes, and it is the correct shape rather than a workaround:
@@ -100,14 +100,14 @@ Independent steps fan out as parallel edges from their common predecessor, then 
 Sequence is only for a real chain: assess (needs both retrievals) → calculate payable (needs the assessment) → route (needs the amount). Each of those genuinely reads the previous one, so each is a single edge in a line.
 Rule of thumb: list what each step reads. Same upstream input and independent of its siblings → parallel branches under a `promissall`. Reads a sibling's output → an edge from that sibling.
 - Branching has exactly ONE source: a node having several outgoing EDGES that stay active. That is the only way a run forks — the runtime starts one task per edge it follows. Nothing else branches: not scope cardinality (that is a queue inside a single node), not `key`, not a node running several times. If two things must happen independently, draw two edges.
-- A node with derived output ports (LLM with bound functions, Jev with routed questions, Rule with handlers, an imported plugin action with `outbound`) has NO default handle: every edge leaving it MUST name a `port`.
+- A node with derived output ports (LLM with bound functions, AI Decision with routed questions, Rule with handlers, an imported plugin action with `outbound`) has NO default handle: every edge leaving it MUST name a `port`.
 - For an LLM node, `port` is the bound function's `name` — the model calling that function is what routes the flow down that edge.
 - Every LLM node with functions also has an `_exception` port: use `port: "_exception"` for the branch that handles a plugin error or the model picking no function.
-- For a Jev node, `port` is `<question id>.<option name>` (e.g. `category.billing`) — Jev's top answer for that question is what routes the flow down that edge. Every Jev node with a routed question also has an `_exception` port (API error, missing answer, or confidence below `min_confidence`).
+- For an `ai-decision` node, `port` is `<question id>.<option name>` (e.g. `category.billing`) — the model's top answer for that question is what routes the flow down that edge. Every `ai-decision` node with a routed question also has an `_exception` port (API error, missing answer, or confidence below `min_confidence`).
 - For a Rule node, `port` is the handler's `name` — the tag its branch fires.
 - For an imported `plugin` action, `port` is the outbound entry's `title` (falling back to its joined `tags`) — the plugin fires those tags at run time, exactly as a Rule does.
 - Other kinds have a single unnamed output: omit `port`.
-- A node with derived ports routes for the whole node, so its `scope` must select ONE value (usually `$`). Never give a wildcard or filter scope to any plugin-backed node carrying `functions`/`questions`/`outbound` (`llm`, `jev`, `mcp`, `cast`, `http`, `plugin` — all the same primitive), nor to a Rule node with `handlers`. See the many-scope limit above.
+- A node with derived ports routes for the whole node, so its `scope` must select ONE value (usually `$`). Never give a wildcard or filter scope to any plugin-backed node carrying `functions`/`questions`/`outbound` (`llm`, `ai-decision`, `mcp`, `cast`, `http`, `plugin` — all the same primitive), nor to a Rule node with `handlers`. See the many-scope limit above.
 - Fanning out to several nodes runs them in parallel.
 - A Rule node that fires no tag at run time prunes every one of its edges: that branch of the flow simply ends, with no error and no log line. The rule must return a handler `name` (or an array of them) on EVERY path — see "Writing code" above — and the handlers must cover every case, or add a default branch.
 

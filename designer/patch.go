@@ -234,15 +234,24 @@ func mergeData(raw PatchNode) map[string]any {
 	if raw.Kind == "llm" {
 		data["functions"] = stampIDs(data["functions"], "fn")
 	}
-	// A Jev question's `id` is its semantic key (the answer key and tag prefix
-	// the designer names), not a row id, so it is left as written; only the
-	// option rows — the port handles — get stamped.
-	if raw.Kind == "jev" {
+	// An AI Decision question's `id` is its semantic key (the answer key and tag
+	// prefix the designer names), not a row id, so it is left as written; only
+	// the option rows — the port handles — get stamped. Its evidence rows are
+	// plain rows and get stamped like any other.
+	if isDecisionKind(raw.Kind) {
 		questions := asRows(data["questions"])
 		for _, q := range questions {
 			q["options"] = stampIDs(q["options"], "opt")
+			// The reference rows of a structured question are plain rows, like
+			// the options, and the drawer keys its list on their ids.
+			if q["references"] != nil {
+				q["references"] = stampIDs(q["references"], "ref")
+			}
 		}
 		data["questions"] = questions
+		if data["evidence"] != nil {
+			data["evidence"] = stampIDs(data["evidence"], "ev")
+		}
 	}
 	if raw.Kind == "rule" {
 		handlers := stampIDs(data["handlers"], "h")
@@ -383,8 +392,8 @@ func derivedPorts(nodeType string, data map[string]any) []derivedPort {
 		}
 		ports = append(ports, derivedPort{id: exceptionTag, tags: []string{exceptionTag}})
 		return ports
-	case "jev":
-		return jevPorts(data)
+	case kindDecision, kindDecisionLegacy:
+		return decisionPorts(data)
 	case "rule":
 		handlers := asRows(data["handlers"])
 		ports := make([]derivedPort, 0, len(handlers))
@@ -414,13 +423,28 @@ func derivedPorts(nodeType string, data map[string]any) []derivedPort {
 	}
 }
 
-// jevPorts is the ports a Jev node grows from its questions: every option of
-// every routed question (route unset or true) is one port, tagged
-// "<question id>.<option name>" — prefixed so options of different questions
-// that share a name never collide — plus the `_exception` port once anything
-// routes. A question with `route: false` is data only and derives nothing.
-// Mirrors the ports() of the jev catalog spec.
-func jevPorts(data map[string]any) []derivedPort {
+// The AI Decision node's kind, and the "jev" it was called when it only spoke
+// to that one vendor. Saved flows still carry the old kind, and both must grow
+// the same ports — see inflow.NODE_DECISION / NODE_JEV, which this mirrors.
+const (
+	kindDecision       = "ai-decision"
+	kindDecisionLegacy = "jev"
+)
+
+// isDecisionKind reports whether a kind is the AI Decision node under either
+// name.
+func isDecisionKind(kind string) bool {
+	return kind == kindDecision || kind == kindDecisionLegacy
+}
+
+// decisionPorts is the ports an AI Decision node grows from its questions:
+// every option of every routed question (route unset or true) is one port,
+// tagged "<question id>.<option name>" — prefixed so options of different
+// questions that share a name never collide — plus the `_exception` port once
+// anything routes. A question with `route: false` is data only and derives
+// nothing. Evidence rows derive no ports: they are input, not an outcome.
+// Mirrors the ports() of the ai-decision catalog spec.
+func decisionPorts(data map[string]any) []derivedPort {
 	var ports []derivedPort
 	for qi, q := range asRows(data["questions"]) {
 		if route, ok := q["route"].(bool); ok && !route {
@@ -486,7 +510,7 @@ func inspectScope(raw PatchNode, data map[string]any) []Problem {
 		return nil
 	}
 	routes := (raw.Kind == "llm" && len(asRows(data["functions"])) > 0) ||
-		(raw.Kind == "jev" && len(jevPorts(data)) > 0) ||
+		(isDecisionKind(raw.Kind) && len(decisionPorts(data)) > 0) ||
 		(raw.Kind == "rule" && len(asRows(data["handlers"])) > 0) ||
 		(raw.Kind == "plugin" && len(asRows(data["outbound"])) > 0)
 	if !routes {

@@ -279,15 +279,15 @@ func TestPlanPatch_UnknownPortDropsEdge(t *testing.T) {
 	}
 }
 
-// A Jev node routes on its questions' options: the port named by tag
+// An AI Decision node routes on its questions' options: the port named by tag
 // (`<question>.<option>`) resolves to the stamped option row and the edge
 // carries that tag; `_exception` is present once anything routes; a
 // `route: false` question derives no ports; an unknown option drops the edge.
-func TestPlanPatch_JevPortsFromQuestions(t *testing.T) {
+func TestPlanPatch_DecisionPortsFromQuestions(t *testing.T) {
 	patch := Patch{
 		Nodes: []PatchNode{
 			{Ref: "start", Kind: "startNode", Title: "Start"},
-			{Ref: "triage", Kind: "jev", Title: "Triage", Data: map[string]any{
+			{Ref: "triage", Kind: "ai-decision", Title: "Triage", Data: map[string]any{
 				"body": map[string]any{"state": "{{$.ticket}}"},
 				"questions": []any{
 					map[string]any{"id": "category", "type": "choice", "instructions": "Which team?",
@@ -307,11 +307,11 @@ func TestPlanPatch_JevPortsFromQuestions(t *testing.T) {
 		},
 	}
 	g, problems := PlanPatch(patch, nil)
-	jev, ok := findNodeByType(g, "jev")
+	decision, ok := findNodeByType(g, "ai-decision")
 	if !ok {
-		t.Fatal("jev node not planned")
+		t.Fatal("ai-decision node not planned")
 	}
-	data := jev.Data.(map[string]any)
+	data := decision.Data.(map[string]any)
 	qs := asRows(data["questions"])
 	if len(qs) != 2 || asStr(qs[0]["id"]) != "category" {
 		t.Fatalf("questions not carried: %+v", qs)
@@ -323,12 +323,12 @@ func TestPlanPatch_JevPortsFromQuestions(t *testing.T) {
 
 	var tags [][]string
 	for _, e := range g.Edges {
-		if e.Source == jev.ID {
+		if e.Source == decision.ID {
 			tags = append(tags, e.Data.Tags)
 		}
 	}
 	if len(tags) != 2 {
-		t.Fatalf("want 2 routed edges off the jev node (billing + _exception), got %d: %v", len(tags), tags)
+		t.Fatalf("want 2 routed edges off the decision node (billing + _exception), got %d: %v", len(tags), tags)
 	}
 	if len(tags[0]) != 1 || tags[0][0] != "category.billing" {
 		t.Errorf("billing edge tags = %v", tags[0])
@@ -338,5 +338,44 @@ func TestPlanPatch_JevPortsFromQuestions(t *testing.T) {
 	}
 	if !hasProblem(problems, "error", `no port "urgency.high"`) {
 		t.Errorf("edge on a data-only question should be dropped, got %+v", problems)
+	}
+}
+
+// The node's kind was "jev" when it only spoke to that one vendor. A flow saved
+// under the old kind must keep deriving the same ports, or its edges lose their
+// tags on the next patch and the branch silently stops firing.
+func TestPlanPatch_LegacyJevKindStillDerivesPorts(t *testing.T) {
+	data := map[string]any{
+		"questions": []any{
+			map[string]any{"id": "category", "type": "choice", "instructions": "Which team?",
+				"options": []any{map[string]any{"name": "billing"}}},
+		},
+	}
+	legacy := derivedPorts("jev", data)
+	current := derivedPorts("ai-decision", data)
+	if len(legacy) == 0 {
+		t.Fatal("the legacy kind derived no ports")
+	}
+	if len(legacy) != len(current) {
+		t.Fatalf("legacy %d ports, current %d — the alias must derive the same set", len(legacy), len(current))
+	}
+	for i := range legacy {
+		if legacy[i].id != current[i].id || len(legacy[i].tags) != len(current[i].tags) {
+			t.Fatalf("port %d differs: %+v vs %+v", i, legacy[i], current[i])
+		}
+	}
+}
+
+// Evidence rows are input, not an outcome: they must never grow a port, or the
+// canvas sprouts an edge handle per retrieved chunk.
+func TestPlanPatch_EvidenceDerivesNoPorts(t *testing.T) {
+	ports := derivedPorts("ai-decision", map[string]any{
+		"evidence": []any{
+			map[string]any{"source": "contract.pdf", "text": "section 12"},
+			map[string]any{"source": "reg.pdf", "text": "section 44"},
+		},
+	})
+	if len(ports) != 0 {
+		t.Fatalf("evidence derived %d ports: %+v", len(ports), ports)
 	}
 }

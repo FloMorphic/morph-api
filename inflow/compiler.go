@@ -17,20 +17,27 @@ const (
 
 	// FloMorphic builtin morphic types (see models/extension.go). Each lowers to
 	// an inflow primitive below.
-	NODE_START      = "startNode"  // -> void (start marker)
-	NODE_HITL       = "hitl"       // -> extrinsic (svc.hitl.add)
-	NODE_DOCSTORE   = "docstore"   // -> extrinsic (svc.store.doc.{ACTION})
-	NODE_VECSTORE   = "vecstore"   // -> extrinsic (svc.store.vec.{ACTION})
-	NODE_PROMISEALL = "promissall" // -> void (depends on all inbound nodes)
-	NODE_LLM        = "llm"        // -> plugin
-	NODE_MCP        = "mcp"        // -> plugin (MCP client)
-	NODE_RULE       = "rule"       // -> contract
-	NODE_JS         = "js"         // -> code (variant js)
-	NODE_OPA        = "opa"        // -> code (variant opa)
-	NODE_UNTIL      = "until"      // -> extrinsic (svc.continue.at)
-	NODE_CAST       = "cast"       // -> plugin
-	NODE_HTTP       = "http"       // -> plugin (HTTP request client)
-	NODE_JEV        = "jev"        // -> plugin (Jev / System One decider)
+	NODE_START      = "startNode"   // -> void (start marker)
+	NODE_HITL       = "hitl"        // -> extrinsic (svc.hitl.add)
+	NODE_DOCSTORE   = "docstore"    // -> extrinsic (svc.store.doc.{ACTION})
+	NODE_VECSTORE   = "vecstore"    // -> extrinsic (svc.store.vec.{ACTION})
+	NODE_PROMISEALL = "promissall"  // -> void (depends on all inbound nodes)
+	NODE_LLM        = "llm"         // -> plugin
+	NODE_MCP        = "mcp"         // -> plugin (MCP client)
+	NODE_RULE       = "rule"        // -> contract
+	NODE_JS         = "js"          // -> code (variant js)
+	NODE_OPA        = "opa"         // -> code (variant opa)
+	NODE_UNTIL      = "until"       // -> extrinsic (svc.continue.at)
+	NODE_CAST       = "cast"        // -> plugin
+	NODE_HTTP       = "http"        // -> plugin (HTTP request client)
+	NODE_DECISION   = "ai-decision" // -> plugin (System One decision model: Jev / Laya)
+
+	// NODE_JEV is what this node's kind used to be called, when it only spoke
+	// to TypeSafe's Jev. The protocol it speaks (POST /v1/systemone) is served
+	// by other models too — Laya, local-first and open — so the kind was
+	// renamed to the capability rather than the vendor. Flows saved under the
+	// old kind still compile: it lowers through the same builder.
+	NODE_JEV = "jev"
 
 	// NODE_PLUGIN is a node contributed by an imported inflowv1 plugin: one
 	// action of that plugin, dropped from the palette after a sync. Unlike the
@@ -144,8 +151,8 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 		err = buildCastNode(&node, vfn, nodeData)
 	case NODE_HTTP:
 		err = buildHTTPNode(&node, vfn, nodeData)
-	case NODE_JEV:
-		err = buildJevNode(&node, vfn, nodeData)
+	case NODE_DECISION, NODE_JEV:
+		err = buildDecisionNode(&node, vfn, nodeData)
 	case NODE_PLUGIN:
 		err = buildPluginActionNode(&node, vfn, nodeData)
 	case NODE_HITL:

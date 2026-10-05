@@ -216,14 +216,19 @@ func buildHTTPNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData m
 	return nil
 }
 
-// buildJevNode lowers a Jev node to a Plugin whose body is the jev plugin's
-// exact RunBody contract — {settings, state, questions} — with `settings`
-// projected from data.settings (the settings-profile values the frontend
-// resolved onto the node: API key, model, base URL) and the state template
-// shipped straight through from the drawer's `body`, same pattern as the LLM
-// node. The questions live outside `body` like the LLM node's functions and
-// are lowered here to the wire shape (frontend-only row ids/titles dropped).
-func buildJevNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData map[string]any) error {
+// buildDecisionNode lowers an AI Decision node to a Plugin whose body is the
+// ai-decision plugin's exact RunBody contract — {settings, state, evidence,
+// questions} — with `settings` projected from data.settings (the
+// settings-profile values the frontend resolved onto the node: API key, model,
+// base URL) and the state template shipped straight through from the drawer's
+// `body`, same pattern as the LLM node. The questions and the evidence rows
+// live outside `body` like the LLM node's functions and are lowered here to the
+// wire shape (frontend-only row ids/titles dropped).
+//
+// Also reached by the node's former kind, "jev" (see inflow.NODE_JEV): the body
+// contract is backward compatible — a flow with no evidence rows compiles to
+// the same body it did before — so an older saved flow needs no migration.
+func buildDecisionNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData map[string]any) error {
 	node.Type = inflowModels.PluginNodeType
 	pluginNode, err := newPluginNode(vfn, nodeData)
 	if err != nil {
@@ -234,15 +239,31 @@ func buildJevNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData ma
 		request = "run"
 	}
 	pluginNode.Request = request
-	pluginNode.Body = map[string]any{
-		"settings":  jevSettingsBody(getMap(nodeData, "settings")),
-		"questions": jevQuestions(nodeData),
-	}
-	for k, v := range getMap(nodeData, "body") {
-		pluginNode.Body[k] = v
-	}
+	pluginNode.Body = decisionBody(nodeData)
 	node.Plugin = &pluginNode.PluginRule
 	return nil
+}
+
+// decisionBody assembles the plugin's RunBody from the node data. Kept apart
+// from buildDecisionNode because that one needs a live inflow backend to make
+// the plugin node, while the body is the part worth testing.
+func decisionBody(nodeData map[string]any) map[string]any {
+	body := map[string]any{
+		"settings":  decisionSettingsBody(getMap(nodeData, "settings")),
+		"questions": decisionQuestions(nodeData),
+	}
+	for k, v := range getMap(nodeData, "body") {
+		body[k] = v
+	}
+	// Lowered rows win over a hand-written body.evidence, and are written only
+	// when the drawer actually collected some — so a body that carries its own
+	// evidence (an agent-authored flow, a cookbook JSON) still reaches the
+	// plugin untouched, and a node with no evidence compiles to exactly the
+	// body it compiled to before evidence existed.
+	if evidence := decisionEvidence(nodeData); len(evidence) > 0 {
+		body["evidence"] = evidence
+	}
+	return body
 }
 
 // buildPluginActionNode lowers a node contributed by an imported plugin to a
@@ -590,11 +611,11 @@ func boundFunctions(data map[string]any, withParams bool) []map[string]any {
 	return out
 }
 
-// jevSettingsBody projects the settings the frontend resolved onto the node
+// decisionSettingsBody projects the settings the frontend resolved onto the node
 // (data.settings — the selected settings-profile's values) onto the exact
-// JevSettings contract the jev plugin reads as `body.settings`. Extra keys are
+// DecisionSettings contract the ai-decision plugin reads as `body.settings`. Extra keys are
 // dropped so the compiled body carries only the contract fields.
-func jevSettingsBody(profile map[string]any) map[string]any {
+func decisionSettingsBody(profile map[string]any) map[string]any {
 	return map[string]any{
 		"access_token":    getStr(profile, "access_token"),
 		"model":           getStr(profile, "model"),
@@ -603,13 +624,13 @@ func jevSettingsBody(profile map[string]any) map[string]any {
 	}
 }
 
-// jevQuestions lowers the drawer's question rows to the jev plugin's Question
+// decisionQuestions lowers the drawer's question rows to the plugin's Question
 // wire shape ({id, type, instructions, route, min_confidence, options[{name,
 // description}]}), dropping the frontend-only fields (row ids, titles). A
 // question without an id, or an option without a name, is skipped — the plugin
 // would reject it, and it has no port to route on anyway. `route` is shipped
 // only when the drawer turned it off, since the plugin defaults it on.
-func jevQuestions(data map[string]any) []map[string]any {
+func decisionQuestions(data map[string]any) []map[string]any {
 	rows := rowsOf(data["questions"])
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
@@ -627,10 +648,14 @@ func jevQuestions(data map[string]any) []map[string]any {
 			opts = append(opts, map[string]any{"name": name, "description": getStr(o, "description")})
 		}
 		q := map[string]any{
-			"id":           id,
-			"type":         getStr(row, "type"),
-			"instructions": getStr(row, "instructions"),
-			"options":      opts,
+			"id":      id,
+			"type":    getStr(row, "type"),
+			"options": opts,
+			// Instructions is NOT flattened to a string: the API takes either a
+			// plain question or a structured object/array — the question in one
+			// field and the reference data it cites by backticked name in the
+			// others — and getStr would silently drop the structured form to "".
+			"instructions": instructionsWithReferences(row),
 		}
 		if route, ok := row["route"].(bool); ok && !route {
 			q["route"] = false
@@ -639,6 +664,85 @@ func jevQuestions(data map[string]any) []map[string]any {
 			q["min_confidence"] = mc
 		}
 		out = append(out, q)
+	}
+	return out
+}
+
+// instructionsWithReferences builds the question's instructions in whichever of
+// the API's two forms the drawer expressed.
+//
+// The drawer keeps the question itself as text and collects any data it needs
+// as named `references` rows, because that is what a designer can read on a
+// canvas — a JSON object editor is not. Those two halves are assembled here,
+// into the structured form the API documents: the question under "question" and
+// each reference under its own name, which the question cites by backticked
+// name (`policy`). With no reference rows the plain string is sent as it is.
+//
+// A row whose `instructions` is ALREADY an object (an agent-authored flow, a
+// cookbook JSON) is passed through untouched — references are the drawer's way
+// in, not the only one.
+func instructionsWithReferences(row map[string]any) any {
+	instructions := instructionsOf(row["instructions"])
+	refs := rowsOf(row["references"])
+	if len(refs) == 0 {
+		return instructions
+	}
+	text, isText := instructions.(string)
+	if !isText {
+		return instructions // already structured; references would be ambiguous
+	}
+	out := make(map[string]any, len(refs)+1)
+	if strings.TrimSpace(text) != "" {
+		out["question"] = text
+	}
+	for _, r := range refs {
+		name := strings.TrimSpace(getStr(r, "name"))
+		// An unnamed reference has nothing for the question to cite, and
+		// "question" is the field the question itself occupies.
+		if name == "" || name == "question" {
+			continue
+		}
+		out[name] = getStr(r, "value")
+	}
+	if len(out) == 0 {
+		return text
+	}
+	return out
+}
+
+// instructionsOf passes a question's instructions through in whichever of the
+// API's two forms the drawer produced: a plain string question, or a structured
+// object/array carrying the question plus the data it references. Anything else
+// (a number, nil) is normalised to "" so the plugin reports the empty-question
+// config error rather than a type error from the far side.
+func instructionsOf(value any) any {
+	switch v := value.(type) {
+	case string:
+		return v
+	case map[string]any, []any, []map[string]any:
+		return v
+	}
+	return ""
+}
+
+// decisionEvidence lowers the drawer's evidence rows to the plugin's
+// EvidenceItem wire shape ({source, text}), dropping the frontend-only row ids.
+// A row with no text is skipped: it would only spend the model's context budget
+// and the plugin rejects it anyway.
+//
+// Evidence is the retrieval side of a decision — the chunks that support it.
+// The service has no evidence parameter of its own (its body is only {model,
+// state, questions}), so the plugin folds these rows into the state it sends;
+// this is just the canvas-to-wire step.
+func decisionEvidence(data map[string]any) []map[string]any {
+	rows := rowsOf(data["evidence"])
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		text := getStr(row, "text")
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		out = append(out, map[string]any{"source": getStr(row, "source"), "text": text})
 	}
 	return out
 }

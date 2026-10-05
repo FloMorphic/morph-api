@@ -131,11 +131,11 @@
   },
   {
     "kind": "builtin",
-    "type": "jev",
-    "name": "Jev",
+    "type": "ai-decision",
+    "name": "AI Decision",
     "pluginId": "aaaa-bbbb-cccc-jev0",
-    "description": "Evaluate state against typed questions (choice / score / noul) on TypeSafe's Jev, a System One decider: calibrated probabilities over the options you declare, in one fast call. Each routed question's options become output ports. Compiles to a Plugin node.",
-    "icon": { "class": "flomorphic", "name": "node-jev", "meta": {} },
+    "description": "Evaluate state and injected evidence against typed questions (choice / score / noul) on a System One decision model — hosted Jev or local Laya: calibrated probabilities over the options you declare, in one fast call. Each routed question's options become output ports. Compiles to a Plugin node.",
+    "icon": { "class": "flomorphic", "name": "node-ai-decision", "meta": {} },
     "params": { "schema": {}, "ui": {} },
     "bindTo": { "topic_key": "", "values": {} }
   }

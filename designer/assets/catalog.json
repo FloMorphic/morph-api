@@ -77,7 +77,7 @@
       "`body.clear_history` (default false): OFF the node RESUMES its conversation across runs. Set it TRUE for any node inside a LOOP, or the `prompt` template is never re-evaluated after the first pass — the model answers from stale history and the loop cannot change its own outcome. The conversation lives on the node's scope, so it also outlives the process.",
       "`body.max_tool_turns` (default 8): the cap on agentic turns, one turn being one model call plus the tools it asked for. The backend floors it at the default, so a value at or below 8 is the same as leaving it out — only a HIGHER value takes effect. Raise it for multi-step work.",
       "In BOTH modes the node has ONE untagged output: it derives no ports, so tool calls never become edges and there is nothing to tag. Do not put a `port` on the edge leaving it.",
-      "Unlike an `llm` or `jev` node it has NO `_exception` port, and its single edge fires whether the call succeeded or failed. A failed node commits `{ \"error\": \"…\" }` to its `key`, so the NEXT node must test that error itself — there is no error branch to catch it."
+      "Unlike an `llm` or `ai-decision` node it has NO `_exception` port, and its single edge fires whether the call succeeded or failed. A failed node commits `{ \"error\": \"…\" }` to its `key`, so the NEXT node must test that error itself — there is no error branch to catch it."
     ]
   },
   {
@@ -149,29 +149,34 @@
     ]
   },
   {
-    "kind": "jev",
-    "label": "Jev",
+    "kind": "ai-decision",
+    "label": "AI Decision",
     "tagline": "Decide fast among declared options",
-    "description": "Evaluate a block of state against typed questions on Jev (TypeSafe's System One decider). Each question declares the answers it may return — choice options, score levels, or yes/no — and Jev returns a calibrated probability over every one of them in a single ~200ms call, never free text. Every option of a routed question is an output port (tag `<question id>.<option name>`); the top answer's port fires. Use it for the bounded, non-reasoning decisions (classify, triage, gate) that do not need an LLM turn. Its API key comes from a settings profile; `body.state` is the state template. Compiles to a Plugin node.",
+    "description": "Evaluate a block of state — and any evidence you inject — against typed questions on a System One decision model: TypeSafe's hosted Jev, or a local Laya, whichever the settings profile points at (both serve the same POST /v1/systemone protocol). Each question declares the answers it may return — choice options, score levels, or yes/no — and the model returns a calibrated probability over every one of them in a single ~200ms call, never free text. Every option of a routed question is an output port (tag `<question id>.<option name>`); the top answer's port fires. Use it for the bounded, non-reasoning decisions (classify, triage, gate) that do not need an LLM turn. `body.state` is the subject template and `evidence` the supporting chunks. Compiles to a Plugin node.",
     "primitives": "Plugin",
     "dataFields": {
-      "subject_prefix": "jev",
+      "subject_prefix": "ai-decision",
       "idle_min": 5,
       "request": "run",
       "body": {
         "state": ""
       },
-      "questions": []
+      "questions": [],
+      "evidence": []
     },
     "notes": [
-      "`body.state` is the content to evaluate: a text template with `{{$.path}}` context vars. Keep it to what the questions need. A template that is exactly one `{{$.obj}}` token sends that JSON value as-is.",
-      "Each question is `{ \"id\": \"snake_case_id\", \"type\": \"choice\" | \"score\" | \"noul\", \"instructions\": \"the question Jev evaluates the state against\", \"route\": true, \"min_confidence\": 0, \"options\": [{ \"name\": \"snake_case\", \"description\": \"what this option means\" }] }`.",
+      "`body.state` is the subject to evaluate — the case, the ticket, the message: a text template with `{{$.path}}` context vars. A template that is exactly one `{{$.obj}}` token sends that JSON value as-is.",
+      "`evidence` is the optional reference material the decision rests on — the retrieval side of a RAG decision: `[{ \"source\": \"contract.pdf\", \"text\": \"{{$.kb.clause}}\" }]`. Both fields of each row are templates. With any row present the node sends `state` as `{ \"case\": <state>, \"evidence\": [\u2026] }`, so a question can cite a part of either by backticked path (`case.problem`, `evidence[0].text`). The service has no separate evidence parameter — this is how evidence reaches it.",
+      "Keep state and evidence to what the questions need: they share one context budget (~64k tokens, state plus the longest question inside ~32k) and accuracy falls as it fills with material the questions do not use. Filter before injecting; do not pass whole documents.",
+      "Each question is `{ \"id\": \"snake_case_id\", \"type\": \"choice\" | \"score\" | \"noul\", \"instructions\": \"the question the model evaluates the state against\", \"route\": true, \"min_confidence\": 0, \"options\": [{ \"name\": \"snake_case\", \"description\": \"what this option means\" }] }`.",
+      "`instructions` may instead be an object: the question in one field and the data it needs in the others, cited by backticked name — `{ \"question\": \"Does this breach `policy`?\", \"policy\": \"{{$.kb.policy}}\" }`. Equivalently, keep `instructions` as text and add `references`: `[{ \"name\": \"policy\", \"value\": \"{{$.kb.policy}}\" }]` — the compiler assembles the object form from the two (`name` becomes the backtick handle; `question` is reserved for the text).",
+      "Every string in a question is a template: instructions (at any depth), each reference `value` and each option `description` have their `{{$.path}}` vars resolved before the call.",
       "`options` per type — choice: one row per selectable option (1–255); score: the ordered levels lowest first (2–10 rows); noul: rows named `yes` / `no` carrying only descriptions (optional).",
       "A routed question (`route: true`, the default) turns every option into an output port whose route tag is `<question id>.<option name>` (e.g. `category.billing`, `repeat.yes`); the top answer's port fires. Several routed questions fire one port each. `route: false` keeps the answer as data only (no ports).",
-      "Jev cannot answer outside the declared options and cannot decline: when the state fits none, it still picks one. Declare an `other` option when the state may not fit — that is the visible no-match branch.",
+      "The model cannot answer outside the declared options and cannot decline: when the state fits none, it still picks one. Declare an `other` option when the state may not fit — that is the visible no-match branch.",
       "Every node with a routed question also has an `_exception` port: it fires on an API error, a missing answer, or when `min_confidence` (0 = off) is set and the top answer's confidence falls below it.",
       "The full distribution lands under `key` (`answers.<id>.probabilities`, `.confidence`, `.answer`), so a `rule` node after it can apply a policy; prefer that over `min_confidence` when the threshold should be visible on the canvas.",
-      "Not a reasoner: no tools, no memory, no chain of thought. When the decision needs reading documents or multi-step judgment, use an `llm` node with bound functions instead."
+      "Not a reasoner: no tools, no memory, no chain of thought. `evidence` lets it weigh material you have already retrieved and filtered — it does not go and read for you. When the decision needs multi-step judgment, or the documents themselves have to be searched, use an `llm` node with bound functions instead."
     ]
   },
   {

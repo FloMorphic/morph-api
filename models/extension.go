@@ -30,21 +30,25 @@ const (
 
 	// Builtin morphic types — FloMorphic's 10 palette nodes. Each is lowered to
 	// an inflow primitive at compile time (see inflow/compiler.go's NodeBuilder).
-	ExtStartType    ExtensionType = "startNode"  // -> void (start marker)
-	ExtHitlType     ExtensionType = "hitl"       // -> extrinsic (svc.hitl.add)
-	ExtDocStoreType ExtensionType = "docstore"   // -> extrinsic (svc.store.doc.{ACTION})
-	ExtVecStoreType ExtensionType = "vecstore"   // -> extrinsic (svc.store.vec.{ACTION})
-	ExtPromiseAll   ExtensionType = "promissall" // -> void (depends on all inbound)
-	ExtLLMType      ExtensionType = "llm"        // -> plugin
-	ExtMCPType      ExtensionType = "mcp"        // -> plugin (MCP client)
-	ExtRuleType     ExtensionType = "rule"       // -> contract
-	ExtJSType       ExtensionType = "js"         // -> code (variant js)
-	ExtOPAType      ExtensionType = "opa"        // -> code (variant opa)
-	ExtGotoType     ExtensionType = "goto"       // -> goto
-	ExtUntilType    ExtensionType = "until"      // -> extrinsic (svc.continue.at)
-	ExtCastType     ExtensionType = "cast"       // -> plugin
-	ExtHTTPType     ExtensionType = "http"       // -> plugin (HTTP / REST client)
-	ExtJevType      ExtensionType = "jev"        // -> plugin (Jev / System One decider)
+	ExtStartType    ExtensionType = "startNode"   // -> void (start marker)
+	ExtHitlType     ExtensionType = "hitl"        // -> extrinsic (svc.hitl.add)
+	ExtDocStoreType ExtensionType = "docstore"    // -> extrinsic (svc.store.doc.{ACTION})
+	ExtVecStoreType ExtensionType = "vecstore"    // -> extrinsic (svc.store.vec.{ACTION})
+	ExtPromiseAll   ExtensionType = "promissall"  // -> void (depends on all inbound)
+	ExtLLMType      ExtensionType = "llm"         // -> plugin
+	ExtMCPType      ExtensionType = "mcp"         // -> plugin (MCP client)
+	ExtRuleType     ExtensionType = "rule"        // -> contract
+	ExtJSType       ExtensionType = "js"          // -> code (variant js)
+	ExtOPAType      ExtensionType = "opa"         // -> code (variant opa)
+	ExtGotoType     ExtensionType = "goto"        // -> goto
+	ExtUntilType    ExtensionType = "until"       // -> extrinsic (svc.continue.at)
+	ExtCastType     ExtensionType = "cast"        // -> plugin
+	ExtHTTPType     ExtensionType = "http"        // -> plugin (HTTP / REST client)
+	ExtDecisionType ExtensionType = "ai-decision" // -> plugin (System One decision model: Jev / Laya)
+	// ExtJevType is the kind's former name, from when it only spoke to
+	// TypeSafe's Jev. Kept so flows and extension rows saved under it still
+	// resolve — see inflow.NODE_JEV.
+	ExtJevType ExtensionType = "jev"
 )
 
 // ExtensionRecord is one palette node: metadata plus, for extrinsic nodes, the
