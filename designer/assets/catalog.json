@@ -175,6 +175,7 @@
       "A routed question (`route: true`, the default) turns every option into an output port whose route tag is `<question id>.<option name>` (e.g. `category.billing`, `repeat.yes`); the top answer's port fires. Several routed questions fire one port each. `route: false` keeps the answer as data only (no ports).",
       "The model cannot answer outside the declared options and cannot decline: when the state fits none, it still picks one. Declare an `other` option when the state may not fit — that is the visible no-match branch.",
       "Every node with a routed question also has an `_exception` port: it fires on an API error, a missing answer, or when `min_confidence` (0 = off) is set and the top answer's confidence falls below it.",
+      "Transient provider failures (429 rate limit, 529 overloaded) are retried before `_exception` fires; the budget is the profile's `max_retries` (default 2, `0` to decide once). A bad key or a validation error is never retried.",
       "The full distribution lands under `key` (`answers.<id>.probabilities`, `.confidence`, `.answer`), so a `rule` node after it can apply a policy; prefer that over `min_confidence` when the threshold should be visible on the canvas.",
       "Not a reasoner: no tools, no memory, no chain of thought. `evidence` lets it weigh material you have already retrieved and filtered — it does not go and read for you. When the decision needs multi-step judgment, or the documents themselves have to be searched, use an `llm` node with bound functions instead."
     ]

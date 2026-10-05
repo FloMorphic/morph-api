@@ -220,3 +220,22 @@ func TestInstructionsWithReferences(t *testing.T) {
 		}
 	})
 }
+
+// Retrying belongs to the connection profile, like it does on the LLM and HTTP
+// nodes. It must reach the plugin only when the profile set it: absent means
+// "take the plugin's default", while an explicit 0 means "never retry", and
+// collapsing the two would remove a real choice from the settings form.
+func TestDecisionSettingsRetryIsOptional(t *testing.T) {
+	bare := decisionSettingsBody(map[string]any{"access_token": "k", "model": "jev-latest"})
+	if _, present := bare["max_retries"]; present {
+		t.Fatalf("a profile that never mentioned retrying must not ship the field: %#v", bare)
+	}
+	off := decisionSettingsBody(map[string]any{"access_token": "k", "max_retries": float64(0)})
+	if v, present := off["max_retries"]; !present || v != 0 {
+		t.Fatalf("an explicit 0 must reach the plugin: %#v", off)
+	}
+	raised := decisionSettingsBody(map[string]any{"access_token": "k", "max_retries": float64(5)})
+	if raised["max_retries"] != 5 {
+		t.Fatalf("explicit count: %#v", raised)
+	}
+}

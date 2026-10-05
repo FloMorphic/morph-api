@@ -616,12 +616,17 @@ func boundFunctions(data map[string]any, withParams bool) []map[string]any {
 // DecisionSettings contract the ai-decision plugin reads as `body.settings`. Extra keys are
 // dropped so the compiled body carries only the contract fields.
 func decisionSettingsBody(profile map[string]any) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"access_token":    getStr(profile, "access_token"),
 		"model":           getStr(profile, "model"),
 		"url":             getStr(profile, "url"),
 		"timeout_seconds": int(getFloat(profile, "timeout_seconds")),
 	}
+	// Shipped only when the profile actually carries it, so the plugin's own
+	// default applies to the profiles that never mention retrying, while an
+	// explicit 0 still reaches it as "never retry". See putOptionalInt.
+	putOptionalInt(out, profile, "max_retries")
+	return out
 }
 
 // decisionQuestions lowers the drawer's question rows to the plugin's Question
