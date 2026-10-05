@@ -194,6 +194,9 @@ over NATS via `pluginId` rather than stored.
 | POST   | `/extension/plugin/cred`                | mint a plugin runtime credential                 |
 | GET    | `/extension/id/:id/install`             | one-liner + script + env to install from source  |
 | GET    | `/extension/id/:id/install.sh`          | the installer itself (text/plain, for `curl \| bash`) |
+| GET    | `/extension/id/:id/ctl.sh`              | the lifecycle helper the installer drops (no credential) |
+| GET    | `/extension/id/:id/install.ps1`         | the Windows installer (text/plain, for `irm \| iex`) |
+| GET    | `/extension/id/:id/ctl.ps1`             | the Windows lifecycle helper (no credential)     |
 | GET    | `/extension/id/:id/env`                 | just the dotenv, for a checkout you already have |
 | POST   | `/extension/id/:id/sync`                | rebuild this plugin's palette rows from `@actions`|
 
@@ -215,6 +218,18 @@ Nothing is cloned, built or executed here: the API renders text the user runs.
 Both responses embed a plugin-scoped credential, so they are secret-bearing in
 exactly the way `POST /extension/plugin/cred` already is — put the API behind
 `AUTH_ENABLED` on any shared deployment.
+
+**Windows hosts.** Path 1 comes in two flavours. A plugin is a process the user
+runs — `go build`, `npm start` or `docker` — and two of those three are native on
+Windows, so the Windows flavour is a real PowerShell pair (`install.ps1` +
+`flomorphic-ctl.ps1`) rather than a hand-off into WSL: no WSL needed to run a
+plugin. `GET …/install` carries it under `windows` alongside the bash fields, and
+the Extensions page offers whichever matches the operator's machine. The dotenv is
+identical either way, and the lifecycle verbs match exactly
+(`build`/`start`/`stop`/`restart`/`status`/`logs`), so a plugin that installs on
+Linux installs on Windows. The generated PowerShell never calls `exit` unguarded —
+under `irm | iex` that would end the user's session — and writes the dotenv as
+UTF-8 with no BOM, which is the one encoding every dotenv parser can read.
 
 **From a running plugin to palette nodes.** A plugin describes itself over
 inflowv1 and none of it is stored, because the plugin is the only authority on

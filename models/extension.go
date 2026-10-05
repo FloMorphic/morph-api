@@ -225,6 +225,28 @@ type InstallInfo struct {
 	Dir string `json:"dir"`
 	// PluginID is the inflowv1 identity the credential is scoped to.
 	PluginID string `json:"pluginId"`
+	// Windows is the same offer for a Windows host: a PowerShell installer and
+	// lifecycle script instead of the bash pair above. A plugin is a process the
+	// user runs — go build, npm start or docker — so on Windows that is native
+	// PowerShell, not WSL. Nil when the extension has no source to install from.
+	Windows *InstallVariant `json:"windows,omitempty"`
+}
+
+// InstallVariant is one platform's way to get a plugin running: the one-liner to
+// paste, the script it fetches, and the lifecycle helper that script drops next
+// to the plugin. Command/ScriptURL/Script are secret-bearing (the script writes
+// the minted credential); Control is not.
+type InstallVariant struct {
+	// Command is the one-liner to paste into that platform's shell.
+	Command string `json:"command"`
+	// ScriptURL is the raw installer endpoint the command fetches.
+	ScriptURL string `json:"scriptUrl"`
+	// Script is that installer's body, so the UI can show what will run.
+	Script string `json:"script"`
+	// Control is the lifecycle script the installer writes next to the plugin.
+	Control string `json:"control"`
+	// ControlFile is the filename Control is written as.
+	ControlFile string `json:"controlFile"`
 }
 
 type Bind struct {

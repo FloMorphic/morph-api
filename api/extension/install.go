@@ -31,6 +31,12 @@ import (
 //
 // Nothing is cloned, built or executed by this API: it renders text the user
 // runs on their own machine.
+//
+// Both paths come in two flavours — bash for a POSIX host, PowerShell for a
+// Windows one (install_ps.go). The plugin is a process the user runs, not a
+// container we schedule, and `go build` / `npm start` are native on Windows, so
+// the Windows flavour is a real PowerShell pair rather than a hand-off into WSL.
+// The dotenv is identical either way: it is the whole of what the SDK needs.
 
 // installEnv handles GET /extension/id/:id/env — the dotenv for a plugin the
 // user already has checked out (path 2 above).
@@ -96,6 +102,7 @@ func (ctl *controller) installInfo(c fiber.Ctx) error {
 		ControlFile: controlFileName,
 		Dir:         dir,
 		PluginID:    rec.PluginID,
+		Windows:     ctl.windowsVariant(c, rec, dotenv, dir),
 	})
 }
 

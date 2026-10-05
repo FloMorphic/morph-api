@@ -40,6 +40,12 @@ func Register(api fiber.Router, store repository.Store) {
 	g.Get("/id/:id/ctl.sh", ctl.controlScriptRaw) // lifecycle helper (no credential)
 	g.Get("/id/:id/env", ctl.installEnv)
 
+	// The same two for a Windows host (see install_ps.go). A plugin is a process
+	// the user runs, and go/npm are native on Windows, so this is real PowerShell
+	// rather than a hand-off into WSL.
+	g.Get("/id/:id/install.ps1", ctl.installScriptPSRaw)
+	g.Get("/id/:id/ctl.ps1", ctl.controlScriptPSRaw) // lifecycle helper (no credential)
+
 	// Rebuild a plugin's palette rows from its live @actions (see sync.go).
 	// Registered before the catch-all POST below so "sync" is not read as a
 	// plugin method name.
