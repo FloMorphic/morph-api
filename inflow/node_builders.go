@@ -617,6 +617,19 @@ func boundFunctions(data map[string]any, withParams bool) []map[string]any {
 // dropped so the compiled body carries only the contract fields.
 func decisionSettingsBody(profile map[string]any) map[string]any {
 	out := map[string]any{
+		// Which of the two decision protocols the node speaks: "systemone"
+		// (TypeSafe's Jev, Laya, Ollama's nimble) or "decisions" (OpenAI's
+		// Decisions API and gateways implementing its shape).
+		//
+		// An absent key travels as "", which the plugin reads as "systemone" —
+		// the behaviour every profile had before the field existed. That
+		// matters more than it looks: a settings profile is SNAPSHOTTED onto a
+		// node when it is applied, so flows compiled before this field existed
+		// carry no `provider` and must keep reaching the same service. If this
+		// were dropped from the projection instead, a profile that selected
+		// "decisions" would silently compile to a System One body and the node
+		// would post it to OpenAI.
+		"provider":        getStr(profile, "provider"),
 		"access_token":    getStr(profile, "access_token"),
 		"model":           getStr(profile, "model"),
 		"url":             getStr(profile, "url"),

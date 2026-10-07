@@ -30,7 +30,7 @@ const (
 	NODE_UNTIL      = "until"       // -> extrinsic (svc.continue.at)
 	NODE_CAST       = "cast"        // -> plugin
 	NODE_HTTP       = "http"        // -> plugin (HTTP request client)
-	NODE_DECISION   = "ai-decision" // -> plugin (System One decision model: Jev / Laya)
+	NODE_DECISION   = "ai-decision" // -> plugin (decision model over either protocol: System One — Jev / Laya / nimble — or the Decisions API)
 
 	// NODE_JEV is what this node's kind used to be called, when it only spoke
 	// to TypeSafe's Jev. The protocol it speaks (POST /v1/systemone) is served

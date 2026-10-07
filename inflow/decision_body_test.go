@@ -93,9 +93,31 @@ func TestDecisionSettingsBody(t *testing.T) {
 		"access_token": "sk_test", "model": "jev-latest", "timeout_seconds": float64(30),
 		"unrelated": "dropped",
 	})
-	want := map[string]any{"access_token": "sk_test", "model": "jev-latest", "url": "", "timeout_seconds": 30}
+	want := map[string]any{
+		// Absent from the profile, so it travels empty — which the plugin reads
+		// as "systemone", the behaviour of every profile saved before the field
+		// existed.
+		"provider": "", "access_token": "sk_test", "model": "jev-latest", "url": "", "timeout_seconds": 30,
+	}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("jevSettingsBody = %#v, want %#v", got, want)
+		t.Errorf("decisionSettingsBody = %#v, want %#v", got, want)
+	}
+}
+
+// The protocol selector has to survive the projection. It is an allowlist, so a
+// field missing from it is dropped silently: a profile that selected OpenAI's
+// Decisions API would compile to a System One body, and the node — reading an
+// empty provider as "systemone" — would post /v1/systemone to api.openai.com.
+func TestDecisionSettingsBodyCarriesTheProtocol(t *testing.T) {
+	for _, c := range []struct{ in, want string }{
+		{"decisions", "decisions"},
+		{"systemone", "systemone"},
+		{"", ""}, // the pre-existing profiles
+	} {
+		got := decisionSettingsBody(map[string]any{"provider": c.in, "access_token": "k"})
+		if got["provider"] != c.want {
+			t.Errorf("provider %q projected as %#v, want %q", c.in, got["provider"], c.want)
+		}
 	}
 }
 
