@@ -3,6 +3,7 @@ package env
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/joho/godotenv"
@@ -27,6 +28,23 @@ func getEnvVar(key string) string {
 	return v
 }
 
+// getEnvVarQuiet is getEnvVar without the "not set" notice. The notice is a
+// useful boot-time hint for a variable a deployment is expected to set, but the
+// database getters below are also read per request (the admin panel's state
+// endpoint), where an unset optional variable is the normal case and the notice
+// is just noise in the log.
+func getEnvVarQuiet(key string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return v
+	}
+	envFile := ".env"
+	if appEnv := os.Getenv("ENV"); appEnv != "" {
+		envFile = envFile + "." + appEnv
+	}
+	_ = godotenv.Load(envFile)
+	return os.Getenv(key)
+}
+
 // GetApiPort returns the listen address, e.g. ":8025". Accepts either "8025" or
 // ":8025" in PORT.
 func GetApiPort() string {
@@ -43,7 +61,7 @@ func GetApiPort() string {
 // "postgres" driver can register itself and be selected here without touching
 // the API or controllers.
 func GetDBDriver() string {
-	if d := getEnvVar("DB_DRIVER"); d != "" {
+	if d := getEnvVarQuiet("DB_DRIVER"); d != "" {
 		return d
 	}
 	return "sqlite"
@@ -53,7 +71,7 @@ func GetDBDriver() string {
 // (or DSN); defaults to "db/flomorphic.db". The sqlite driver creates the parent
 // directory if it is missing.
 func GetDBSource() string {
-	if s := getEnvVar("DB_SOURCE"); s != "" {
+	if s := getEnvVarQuiet("DB_SOURCE"); s != "" {
 		return s
 	}
 	return "db/flomorphic.db"
@@ -111,4 +129,67 @@ func AuthEnabled() bool {
 func MCPEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(getEnvVar("MCP_ENABLED")))
 	return v == "" || v == "true" || v == "1" || v == "yes"
+}
+
+// GetDBConfigFile is where the database selection made in the admin panel is
+// persisted (DB_CONFIG_FILE). It is read at boot and takes precedence over
+// DB_DRIVER/DB_SOURCE, so a switch survives a restart without anyone editing
+// the environment; deleting the file hands control back to the environment.
+//
+// The default puts it beside the sqlite database, which is the one directory a
+// deployment is already guaranteed to have made writable (/data in the shipped
+// container).
+func GetDBConfigFile() string {
+	if p := strings.TrimSpace(getEnvVarQuiet("DB_CONFIG_FILE")); p != "" {
+		return p
+	}
+	dir := filepath.Dir(sqliteSourceDefault())
+	if dir == "" || dir == "." {
+		return "database.json"
+	}
+	return filepath.Join(dir, "database.json")
+}
+
+// GetVectorDBSource is the sqlite file that holds the vector indexes
+// (DB_VECTOR_SOURCE). Vector memory is always sqlite-vec, including on a
+// postgres deployment — see repository/postgres — so this is the one path that
+// stays sqlite whatever DB_DRIVER says. Defaults to the deployment's sqlite
+// file, so vector stores created before a switch to postgres are still indexed
+// and searchable after it. Set it to "off" to decline vector memory entirely.
+func GetVectorDBSource() string {
+	if v := strings.TrimSpace(getEnvVarQuiet("DB_VECTOR_SOURCE")); v != "" {
+		return v
+	}
+	return sqliteSourceDefault()
+}
+
+// sqliteSourceDefault is the sqlite file this deployment uses, or would use:
+// DB_SOURCE when it names a sqlite database, and the stock path otherwise (so a
+// deployment configured straight onto postgres still has a sane sqlite path for
+// its vector indexes and its saved selection).
+func sqliteSourceDefault() string {
+	if GetDBDriver() == "sqlite" {
+		return GetDBSource()
+	}
+	return "db/flomorphic.db"
+}
+
+// GetLocalEntities names the entities that stay in the sqlite file even when the
+// main driver is postgres (DB_LOCAL_TABLES), as a comma-separated list of entity
+// keys — see repository/postgres.LocalEntityKeys. The convenience value "config"
+// expands to the two credential-bearing ones (node settings and the Connect
+// gateways), so an operator can keep keys on the local disk while the records go
+// to postgres. Empty (the default) means postgres carries everything.
+func GetLocalEntities() []string {
+	raw := strings.TrimSpace(getEnvVarQuiet("DB_LOCAL_TABLES"))
+	if raw == "" {
+		return nil
+	}
+	out := make([]string, 0, 4)
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.ToLower(strings.TrimSpace(part)); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

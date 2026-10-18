@@ -304,12 +304,21 @@ api/                       HTTP controllers — one folder per entity
 models/                    wire types, kept 1:1 with flomorphic-wapp's src/types/api.ts
 repository/                persistence CONTRACT (interfaces) + driver registry
   repository.go            Store, {Workflow,Context,Memory,Prompt,HumanTask}Repository, Register/Open
+  config.go                the selected driver+source, saved/loaded for the panel
+  switchable.go            Store facade that can be repointed at run time
+  probe.go                 Pinger + driver probes (can I use this database?)
+  seed/                    first-run seed shared by every backend (builtins, prompts)
   sqlite/                  the sqlite driver (registers itself as "sqlite")
     schema.sql             DDL (source of truth for migrations + sqlc)
     queries/*.sql          sqlc queries
     sqlcgen/               generated code (do not edit)
-    *.go                   adapters: sqlc rows <-> domain models, sqlite-vec index
+    *.go                   adapters: sqlc rows <-> domain models
+    vector.go              VectorIndex: the sqlite-vec engine, used by BOTH backends
     cdeps/sqlite3.h        vendored header for the cgo build (see below)
+  postgres/                the optional postgres driver ("postgres")
+    schema.sql             DDL, table-for-table with the sqlite schema
+    *.go                   hand-written SQL adapters (no second sqlc engine)
+    residency.go           entities a postgres deployment keeps in sqlite anyway
 inflow/                    inflow-fusion wiring (compiler + backend contract)
 etc/                       Send envelope helper, JWT middleware
 ```
@@ -323,10 +332,73 @@ backend implements `repository.Store` and registers itself:
 func init() { repository.Register("sqlite", Open) }
 ```
 
-`repository.Open(driver, source)` then returns the right `Store`, selected by the
-`DB_DRIVER` env var. Adding e.g. Postgres means a new `repository/postgres`
-package (its own sqlc config against the same `models`) and importing it for its
-`init()` — no changes to the API, controllers, or models.
+`repository.Open(driver, source)` then returns the right `Store`. Two backends
+ship:
+
+| Driver     | Source                                   | When                                              |
+| ---------- | ---------------------------------------- | ------------------------------------------------- |
+| `sqlite`   | a file path (`db/flomorphic.db`)         | the default; enough for a single-node install      |
+| `postgres` | `postgres://user:pass@host:5432/db`      | several API replicas, a managed/shared database, ops who want their own backup & replication |
+
+The postgres backend is a full implementation of the same interfaces — same
+entities, same pagination, same `ErrNotFound` semantics — with hand-written SQL
+rather than a second sqlc engine (the statements are the sqlite ones with `$n`
+placeholders, so a generated package would be another thing to keep in step for
+no gain). Its `schema.sql` mirrors the sqlite one table for table; only what
+postgres forces differs: `BIGINT` millis, `BOOLEAN` flags, `BIGSERIAL` for
+`processes.index_id`.
+
+#### Switching databases from the admin panel
+
+`/database` is the panel's screen for this, and it does not need a restart:
+
+| Endpoint                 | Does                                                           |
+| ------------------------ | -------------------------------------------------------------- |
+| `GET  /database`         | live driver + source (password masked), health, available drivers |
+| `POST /database/test`    | probe a candidate: reachable? writable? vector memory? — creates nothing |
+| `POST /database/switch`  | `{driver, source}` → probe, open, repoint the live store, save the selection |
+| `POST /database/reset`   | forget the saved selection, back to `DB_DRIVER`/`DB_SOURCE`     |
+
+A switch opens the candidate first and only repoints on success, so a mistyped
+URI costs an error message rather than the service. The store every controller
+and scheduler holds is a `repository.Switchable` facade that resolves the live
+backend per call, which is why no re-wiring or restart is needed; the previous
+connection is closed after a short grace period so in-flight requests finish.
+The selection is saved to `DB_CONFIG_FILE` (0600 — it holds the URI's password)
+and **wins over the environment** on the next boot, so a decision made in the
+panel survives a restart until it is reset.
+
+**No data is copied.** The instance moves to whatever the target database
+already holds: the schema is created and the builtin palette and starter prompts
+are seeded as on any first run. Moving existing rows is a separate per-table
+action.
+
+Two caveats worth knowing before switching:
+
+* **Document-store read queries are the author's SQL**, in the dialect of the
+  database underneath. A read written for sqlite (`json_extract(data, '$.x')`)
+  has to be rewritten with postgres's JSON operators (`data->>'x'`) — on
+  postgres the `data` column is `jsonb` precisely so that works well.
+* **Processes are keyed by an auto-increment index**, which restarts from 1 in a
+  fresh database. Nothing in a run's lifecycle depends on indexes being globally
+  unique, but a `indexId` from the old database will not resolve in the new one.
+
+#### What stays in SQLite on a postgres deployment
+
+* **Vector indexes, always.** Embeddings are indexed by sqlite-vec whatever the
+  main driver is (`DB_VECTOR_SOURCE`, the deployment's sqlite file by default):
+  no pgvector requirement, and a vector store created before a switch is still
+  searchable after it. The store rows and the document tables move to postgres;
+  only the `vec_*` tables stay behind. With `DB_VECTOR_SOURCE=off` vector memory
+  is declined outright and creating a vector store fails with that reason,
+  rather than half-working.
+* **Whatever `DB_LOCAL_TABLES` names.** Some tables are a deployment's keys
+  rather than its records: the node settings profiles and the Connect gateway
+  tokens. `DB_LOCAL_TABLES=config` keeps those two in the local sqlite file
+  while everything else goes to postgres; any entity key from the list
+  (`workflows contexts memory prompts hitl settings processes extensions
+  triggers connect telegram`, or `all`) is accepted, and a typo is a startup
+  error rather than a table silently sent to the wrong database.
 
 ### Vector indexing (sqlite-vec)
 
@@ -334,6 +406,13 @@ The connection auto-loads sqlite-vec (`sqlite_vec.Auto()`), verified with
 `vec_version()` at startup. Creating a **vector** memory store provisions a
 companion `vec0` virtual table sized to the store's `dimensions`; deleting the
 store drops it. Document stores persist only their table/column schema.
+
+The index is its own engine (`repository/sqlite.VectorIndex`) rather than part of
+the sqlite repository, because it serves both backends: a postgres deployment
+holds the store rows and points its vector operations at a sqlite file (see
+*What stays in SQLite* above). Nothing in the index reads `memory_stores` — a
+store's id and its captured embedding config are all it needs — so either
+backend's bookkeeping works with it.
 
 ## Running
 
@@ -368,8 +447,11 @@ The Dockerfile does this for you (`MUSL_CFLAGS`).
 | Variable                  | Default         | Purpose                                        |
 | ------------------------- | --------------- | ---------------------------------------------- |
 | `PORT`                    | `8025`          | HTTP listen port                               |
-| `DB_DRIVER`               | `sqlite`        | Repository backend                             |
-| `DB_SOURCE`               | `db/flomorphic.db` | sqlite file path (parent dir auto-created)   |
+| `DB_DRIVER`               | `sqlite`        | Repository backend (`sqlite` / `postgres`)     |
+| `DB_SOURCE`               | `db/flomorphic.db` | sqlite file path, or the postgres URI        |
+| `DB_CONFIG_FILE`          | next to `DB_SOURCE` | where a panel switch saves its selection (wins over `DB_DRIVER`/`DB_SOURCE`) |
+| `DB_VECTOR_SOURCE`        | the sqlite file | sqlite file holding the vector indexes; `off` disables vector memory |
+| `DB_LOCAL_TABLES`         | —               | entities a postgres deployment keeps in sqlite (`config` = settings + connect) |
 | `AUTH_ENABLED`            | `false`         | Require an HS256 bearer token on CRUD routes   |
 | `API_JWT_SECRET`          | —               | HS256 secret (falls back to the infra secret)  |
 | `INFLOW_INFRA_API`        | —               | inflow infra API base; unset ⇒ runtime disabled|

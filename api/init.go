@@ -6,6 +6,7 @@ package api
 import (
 	connectControllers "github.com/FloMorphic/morph-api/api/connect"
 	contextControllers "github.com/FloMorphic/morph-api/api/context"
+	databaseControllers "github.com/FloMorphic/morph-api/api/database"
 	designerControllers "github.com/FloMorphic/morph-api/api/designer"
 	extensionControllers "github.com/FloMorphic/morph-api/api/extension"
 	hitlControllers "github.com/FloMorphic/morph-api/api/hitl"
@@ -70,6 +71,9 @@ func RegisterAll(app fiber.Router, store repository.Store) {
 	triggerControllers.Register(app, store)
 	designerControllers.Register(app, store)
 	connectControllers.Register(app, store)
+	// Persistence itself: which database this instance runs on, and moving it to
+	// another one. Inside the gated section — it is an admin action.
+	databaseControllers.Register(app, store)
 
 	// Embedded MCP server (/mcp). Mounted last, inside the guarded section, so it
 	// inherits the same optional bearer gate as the CRUD groups. Off with

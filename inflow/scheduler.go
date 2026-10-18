@@ -66,6 +66,11 @@ func notifyScheduler() {
 	}
 }
 
+// NotifyScheduler is notifyScheduler for callers outside this package — the
+// database switch uses it, because an armed timer was computed from the old
+// database's nearest scheduled row and means nothing on the new one.
+func NotifyScheduler() { notifyScheduler() }
+
 // run is the scheduler loop: dispatch everything due, arm a timer for the
 // nearest remaining row (capped by the fallback), sleep until the timer, a
 // Notify, or ctx cancellation.

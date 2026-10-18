@@ -8,7 +8,10 @@ import (
 	"github.com/FloMorphic/morph-api/env"
 	"github.com/FloMorphic/morph-api/inflow"
 	"github.com/FloMorphic/morph-api/repository"
-	// Register the sqlite repository driver (side-effecting init).
+	// Register the repository drivers (side-effecting init). sqlite is the
+	// default and always linked (it also hosts the vector indexes); postgres is
+	// the optional backend an operator can select from the admin panel.
+	_ "github.com/FloMorphic/morph-api/repository/postgres"
 	_ "github.com/FloMorphic/morph-api/repository/sqlite"
 
 	fuse "github.com/Inflowenger/inflow-fusion/inflow"
@@ -19,12 +22,25 @@ import (
 )
 
 func main() {
-	// Persistence — driver selected by env (sqlite by default).
-	store, err := repository.Open(env.GetDBDriver(), env.GetDBSource())
+	// Persistence — sqlite by default, or whatever the admin panel last selected
+	// (see resolveDBConfig). The store is wrapped in a Switchable so the panel
+	// can repoint it at another database without a restart: every controller,
+	// scheduler and service handler below is handed that one facade and resolves
+	// the live backend per call.
+	cfg := resolveDBConfig()
+	opened, err := repository.Open(cfg.Driver, cfg.Source)
 	if err != nil {
 		panic(err)
 	}
+	store := repository.NewSwitchable(cfg, opened)
 	defer store.Close()
+
+	// A switch invalidates both schedulers' armed timers — they were computed
+	// from the previous database's nearest due row — so wake them to re-read.
+	store.OnSwitch(func() {
+		inflow.NotifyScheduler()
+		inflow.NotifyTriggerScheduler()
+	})
 
 	// Inflow runtime is optional in standalone/dev. Skip it entirely when no
 	// infra API is configured; otherwise connect in the background with retry so
@@ -50,6 +66,34 @@ func main() {
 	if err := app.Listen(env.GetApiPort()); err != nil {
 		panic(err)
 	}
+}
+
+// resolveDBConfig picks the database to open: the selection saved by the admin
+// panel if there is one, else DB_DRIVER/DB_SOURCE (sqlite by default).
+//
+// The saved file wins over the environment deliberately. The environment is the
+// deployment's default — what a fresh install or a reset falls back to — while
+// the file is a decision an operator made on this instance, and it would be
+// surprising for a restart to undo it. A file that exists but cannot be parsed
+// is fatal: coming up on a different database than the one selected is worse
+// than refusing to start.
+func resolveDBConfig() repository.Config {
+	envCfg := repository.Config{Driver: env.GetDBDriver(), Source: env.GetDBSource()}.Normalized()
+	path := env.GetDBConfigFile()
+	saved, err := repository.LoadConfig(path)
+	if err != nil {
+		panic(err)
+	}
+	if saved == nil {
+		return envCfg
+	}
+	cfg := saved.Normalized()
+	if err := cfg.Validate(); err != nil {
+		fmt.Printf("warning: saved database selection in %s is unusable (%v) — falling back to the environment\n", path, err)
+		return envCfg
+	}
+	fmt.Printf("database selection from %s: %s (%s)\n", path, cfg.Driver, repository.RedactSource(cfg.Source))
+	return cfg
 }
 
 // connectInflowWithRetry connects to the inflow runtime and, once connected,

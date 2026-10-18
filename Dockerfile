@@ -89,7 +89,7 @@ COPY --from=api-build     /out/flomorphic-api /app/flomorphic-api
 COPY --from=plugins-build /out/bin            /app/plugins
 # The seed carries each builtin node's hard-coded PLUGIN_ID; keep a copy so the
 # entrypoint can resolve ids even before the API answers.
-COPY --from=api-build     /src/repository/sqlite/seed /app/seed
+COPY --from=api-build     /src/repository/seed          /app/seed
 
 ARG PLUGINS_REPO
 ARG PLUGINS_REF
@@ -99,6 +99,8 @@ ARG GOPROXY
 ENV GOPROXY=${GOPROXY} \
     PORT=8025 \
     DB_SOURCE=/data/flomorphic.db \
+    DB_CONFIG_FILE=/data/database.json \
+    DB_VECTOR_SOURCE=/data/flomorphic.db \
     MCP_ENABLED=true \
     APP_DIR=/app \
     PLUGIN_BIN_DIR=/app/plugins \

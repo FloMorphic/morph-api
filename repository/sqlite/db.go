@@ -14,22 +14,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
+	"github.com/FloMorphic/morph-api/repository/seed"
 	"github.com/FloMorphic/morph-api/repository/sqlite/sqlcgen"
 	sqlite_vec "github.com/asg017/sqlite-vec-go-bindings/cgo"
-	"github.com/bytedance/sonic"
 	_ "github.com/mattn/go-sqlite3"
 )
 
 //go:embed schema.sql
 var schemaSQL string
-
-//go:embed seed/builtins.json
-var builtinsSeed []byte
-
-//go:embed seed/prompts.json
-var promptsSeed []byte
 
 const driverName = "sqlite"
 
@@ -37,6 +30,49 @@ func init() {
 	// Make every new sqlite3 connection auto-load sqlite-vec (vec0 tables).
 	sqlite_vec.Auto()
 	repository.Register(driverName, Open)
+	repository.RegisterProber(driverName, Probe)
+}
+
+// Probe inspects a candidate sqlite file without taking the application onto it:
+// it creates the parent directory, opens the file, checks sqlite-vec loaded and
+// that the connection can actually write. It applies no application schema and
+// seeds nothing — an operator testing a path gets an empty file at worst, not a
+// half-provisioned database.
+func Probe(ctx context.Context, source string) (repository.ProbeResult, error) {
+	out := repository.ProbeResult{Driver: driverName}
+	if strings.TrimSpace(source) == "" {
+		source = "flomorphic.db"
+	}
+	idx, err := OpenVectorIndex(source)
+	if err != nil {
+		return out, err
+	}
+	defer idx.Close()
+
+	version, err := idx.Version(ctx)
+	if err != nil {
+		return out, err
+	}
+	out.Vector = true
+	out.Server = fmt.Sprintf("SQLite (sqlite-vec %s) at %s", version, source)
+
+	// A file in a read-only directory, or one owned by another user, opens fine
+	// and then fails on the first save — so write something and roll it back.
+	if _, err := idx.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS _flomorphic_probe (x INTEGER)`); err != nil {
+		out.Notes = append(out.Notes, "this database is not writable: "+err.Error())
+		return out, nil
+	}
+	_, _ = idx.db.ExecContext(ctx, `DROP TABLE IF EXISTS _flomorphic_probe`)
+	out.Writable = true
+
+	// Report an existing FloMorphic database, so the panel can say "existing"
+	// rather than implying a fresh one.
+	var found string
+	if err := idx.db.QueryRowContext(ctx,
+		`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'workflows'`).Scan(&found); err == nil && found != "" {
+		out.Notes = append(out.Notes, "the FloMorphic schema is already present in this file")
+	}
+	return out, nil
 }
 
 // store implements repository.Store over a single *sql.DB.
@@ -81,10 +117,10 @@ func Open(source string) (repository.Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: apply migrations: %w", err)
 	}
-	var vecVersion string
-	if err := db.QueryRow("SELECT vec_version()").Scan(&vecVersion); err != nil {
+	vecVersion, err := newVectorIndex(db).Version(context.Background())
+	if err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("sqlite: sqlite-vec not loaded: %w", err)
+		return nil, err
 	}
 	fmt.Printf("sqlite ready (%s), sqlite-vec %s\n", source, vecVersion)
 
@@ -93,7 +129,7 @@ func Open(source string) (repository.Store, error) {
 		db:           db,
 		workflows:    &workflowRepo{q: q},
 		contexts:     &contextRepo{q: q},
-		memory:       &memoryRepo{db: db, q: q},
+		memory:       &memoryRepo{db: db, q: q, vec: newVectorIndex(db)},
 		prompts:      &promptRepo{q: q},
 		humanTasks:   &humanTaskRepo{q: q},
 		nodeSettings: &nodeSettingRepo{q: q},
@@ -104,52 +140,17 @@ func Open(source string) (repository.Store, error) {
 		tgRecipients: &telegramRecipientRepo{q: q},
 	}
 
-	// Seed builtin palette nodes on first run (idempotent, keyed by name). A
-	// bad/empty seed file must not stop the server from serving CRUD.
-	if defs, err := decodeBuiltinsSeed(); err != nil {
-		fmt.Printf("warning: builtins seed not applied: %v\n", err)
-	} else if n, err := s.extensions.SeedBuiltins(context.Background(), defs); err != nil {
-		fmt.Printf("warning: builtins seed not applied: %v\n", err)
-	} else if n > 0 {
-		fmt.Printf("seeded %d builtin node(s)\n", n)
-	}
-
-	// Seed the starter prompt templates the same way (idempotent, keyed by their
-	// fixed ids). Same rule: a bad seed file is a warning, never a startup error.
-	if defs, err := decodePromptsSeed(); err != nil {
-		fmt.Printf("warning: prompts seed not applied: %v\n", err)
-	} else if n, err := s.prompts.SeedPrompts(context.Background(), defs); err != nil {
-		fmt.Printf("warning: prompts seed not applied: %v\n", err)
-	} else if n > 0 {
-		fmt.Printf("seeded %d prompt(s)\n", n)
-	}
+	// Seed the builtin palette nodes and the starter prompt templates on first
+	// run, from the shared seed package so every backend comes up with the same
+	// set. Both passes are idempotent and never fatal.
+	seed.Apply(context.Background(), s.extensions, s.prompts)
 
 	return s, nil
 }
 
-// decodeBuiltinsSeed parses the embedded builtins seed into records.
-func decodeBuiltinsSeed() ([]models.ExtensionRecord, error) {
-	var defs []models.ExtensionRecord
-	if len(builtinsSeed) == 0 {
-		return defs, nil
-	}
-	if err := sonic.Unmarshal(builtinsSeed, &defs); err != nil {
-		return nil, fmt.Errorf("decode builtins seed: %w", err)
-	}
-	return defs, nil
-}
-
-// decodePromptsSeed parses the embedded prompt-template seed into records.
-func decodePromptsSeed() ([]models.PromptRecord, error) {
-	var defs []models.PromptRecord
-	if len(promptsSeed) == 0 {
-		return defs, nil
-	}
-	if err := sonic.Unmarshal(promptsSeed, &defs); err != nil {
-		return nil, fmt.Errorf("decode prompts seed: %w", err)
-	}
-	return defs, nil
-}
+// Ping reports whether the underlying database still answers — what the
+// database panel's health check calls through repository.Pinger.
+func (s *store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 func (s *store) Workflows() repository.WorkflowRepository       { return s.workflows }
 func (s *store) Contexts() repository.ContextRepository         { return s.contexts }

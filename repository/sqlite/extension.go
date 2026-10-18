@@ -9,6 +9,7 @@ import (
 
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
+	"github.com/FloMorphic/morph-api/repository/seed"
 	"github.com/FloMorphic/morph-api/repository/sqlite/sqlcgen"
 )
 
@@ -122,17 +123,12 @@ func (r *extensionRepo) DeletePluginActions(ctx context.Context, pluginID string
 	return int(n), err
 }
 
-// retiredBuiltinNames are the pre-morphic generic builtins that the current seed
-// replaced. They are pruned on startup so an existing dev DB's palette matches
-// the seeded set (idempotent — a missing row is a no-op).
-var retiredBuiltinNames = []string{"PluginNative", "Code", "Contract", "Extrinsics", "Goto", "Void"}
-
 // SeedBuiltins inserts each builtin whose name is not already present, keyed by
 // name, so restarts don't duplicate and admin edits are never clobbered. It also
 // prunes the retired generic builtins so a re-seeded DB reflects the current set.
 func (r *extensionRepo) SeedBuiltins(ctx context.Context, defs []models.ExtensionRecord) (int, error) {
 	// Prune retired builtins (idempotent).
-	for _, name := range retiredBuiltinNames {
+	for _, name := range seed.RetiredBuiltinNames {
 		row, err := r.q.GetBuiltinByName(ctx, name)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
@@ -166,7 +162,7 @@ func (r *extensionRepo) SeedBuiltins(ctx context.Context, defs []models.Extensio
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return inserted, err
 		}
-		def.ID = ""       // force a fresh id
+		def.ID = "" // force a fresh id
 		def.Kind = models.KindBuiltin
 		if err := r.Upsert(ctx, &def); err != nil {
 			return inserted, err

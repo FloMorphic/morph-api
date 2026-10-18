@@ -41,12 +41,16 @@ type VectorMemoryConfig struct {
 	Namespace      string       `json:"namespace"`
 }
 
-// SQLiteDistanceMetric maps the configured metric to the keyword sqlite-vec's
-// vec0 accepts on a vector column (`distance_metric=`). Defaults to cosine,
-// which is the sensible default for text embeddings; dot product has no direct
-// vec0 equivalent, so it also falls back to cosine (unit-norm embeddings make
-// the two rank identically).
-func (c *VectorMemoryConfig) SQLiteDistanceMetric() string {
+// NormalizedMetric collapses the configured metric onto the two distance
+// functions every backend's vector index actually implements: "cosine" or "L2".
+// Cosine is the default (the sensible one for text embeddings) and also where
+// dot product lands, since no backend exposes it directly and unit-norm
+// embeddings make the two rank identically.
+//
+// It is the backend-neutral form: sqlite-vec takes the keyword verbatim
+// (`distance_metric=`), pgvector picks its operator class from it, and
+// SimilarityScore normalizes the resulting distance with it.
+func (c *VectorMemoryConfig) NormalizedMetric() string {
 	switch c.Metric {
 	case MetricEuclidean:
 		return "L2"
@@ -57,7 +61,11 @@ func (c *VectorMemoryConfig) SQLiteDistanceMetric() string {
 	}
 }
 
-// SimilarityScore converts a raw vec0 distance (smaller is closer) into a
+// SQLiteDistanceMetric is NormalizedMetric under the name the sqlite backend's
+// vec0 DDL reads it as (`distance_metric=cosine|L2`).
+func (c *VectorMemoryConfig) SQLiteDistanceMetric() string { return c.NormalizedMetric() }
+
+// SimilarityScore converts a raw index distance (smaller is closer) into a
 // normalized similarity where higher means more similar, so callers can rank and
 // threshold on an intuitive scale regardless of the store's metric:
 //
@@ -68,7 +76,7 @@ func (c *VectorMemoryConfig) SQLiteDistanceMetric() string {
 // as ordering by score descending — a search can stop at the first sub-threshold
 // hit.
 func (c *VectorMemoryConfig) SimilarityScore(distance float64) float64 {
-	if c.SQLiteDistanceMetric() == "L2" {
+	if c.NormalizedMetric() == "L2" {
 		return 1 / (1 + distance)
 	}
 	// cosine (also the fallback for dot / unset)
