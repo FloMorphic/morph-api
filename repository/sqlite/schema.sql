@@ -11,6 +11,11 @@ CREATE TABLE IF NOT EXISTS workflows (
     id         TEXT    PRIMARY KEY,
     title      TEXT    NOT NULL DEFAULT '',
     view_flow  TEXT    NOT NULL DEFAULT '{}',
+    -- Free-form labels, a JSON array, filtered by GET /flow?tags= (match any).
+    -- A JSON array rather than a join table: tags are read whole with the row
+    -- and only ever queried as "does this row carry one of these", which
+    -- json_each answers without a second table to keep in step.
+    tags       TEXT    NOT NULL DEFAULT '[]',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );

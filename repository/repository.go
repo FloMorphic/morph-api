@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/FloMorphic/morph-api/models"
 )
@@ -39,6 +40,27 @@ type ListParams struct {
 	// origin ("builtin" or "extension"); empty means "any". The admin settings
 	// panel lists builtins; the extension portal lists extensions.
 	Kind string
+	// Tags is an optional match-ANY label filter used by Workflows: a row is
+	// kept when it carries at least one of these tags. Empty means "any" — the
+	// unfiltered list every caller got before tags existed. Backends encode it
+	// with TagFilter and test membership in SQL, so paging stays correct.
+	Tags []string
+}
+
+// TagFilter encodes a match-any tag filter as the one bound parameter both
+// backends test against: ",a,b," — delimited at both ends, so `instr` /
+// `strpos` of ",<tag>," is an exact element match and never a prefix one
+// ("gdpr" must not match "gdpr-lite"). Empty input yields "", which every tag
+// predicate reads as "no filter".
+//
+// The tags are normalized first, which is what makes the delimiting safe: a
+// normalized tag holds no comma (see models.NormalizeTags).
+func TagFilter(tags []string) string {
+	norm := models.NormalizeTags(tags)
+	if len(norm) == 0 {
+		return ""
+	}
+	return "," + strings.Join(norm, ",") + ","
 }
 
 // CRUD is the shared persistence contract for entities keyed by a string id

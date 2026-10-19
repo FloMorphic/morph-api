@@ -52,7 +52,19 @@ func listParams(req mcp.CallToolRequest) repository.ListParams {
 		Offset: (page - 1) * perPage,
 		Limit:  perPage,
 		Search: strings.TrimSpace(req.GetString("search", "")),
+		Tags:   splitTags(req.GetString("tags", "")),
 	}
+}
+
+// splitTags reads a comma-separated `tags` argument into a match-any filter.
+// Only the list tools that advertise `tags` (flo_list_workflows) can receive
+// it; for the rest it is always empty, which every backend reads as "no
+// filter".
+func splitTags(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return strings.Split(raw, ",")
 }
 
 // argObject reads an optional JSON-object argument (e.g. `settings`, `metadata`,

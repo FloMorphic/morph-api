@@ -25,6 +25,8 @@ func Register(api fiber.Router, store repository.Store) {
 	g.Post("/import", ctl.importFlow)
 	g.Get("", ctl.list)
 	g.Get("/id/:id", ctl.getByID)
+	// Relabel a flow (the tag filter's write side) without resending its graph.
+	g.Put("/id/:id/tags", ctl.setTags)
 	g.Get("/id/:id/export", ctl.exportFlow)
 	g.Get("/id/:id/compile", ctl.compile)
 	g.Delete("/id/:id", ctl.deleteByID)

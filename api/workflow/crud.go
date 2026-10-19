@@ -34,6 +34,12 @@ func (ctl *controller) upsert(c fiber.Ctx) error {
 }
 
 // list handles GET /flow — page-based listing with total count.
+//
+// `tags` is an optional comma-separated match-ANY label filter: a flow is kept
+// when it carries at least one of them. It is what lets a consumer of this
+// install show the operator the handful of flows one compliance framework
+// installed instead of every flow on the canvas — and an absent or empty
+// `tags` is the unfiltered list, so clearing the filter needs no second route.
 func (ctl *controller) list(c fiber.Ctx) error {
 	var q models.PaginationParams
 	if err := c.Bind().Query(&q); err != nil {
@@ -46,11 +52,67 @@ func (ctl *controller) list(c fiber.Ctx) error {
 		Offset: q.Offset(),
 		Limit:  q.PerPage,
 		Search: q.Search,
+		Tags:   splitTags(c.Query("tags")),
 	})
 	if err != nil {
 		return etc.FailFromRepo(c, err, "workflows not found")
 	}
 	return etc.OK(c, models.NewPage(items, total, q))
+}
+
+// splitTags reads a comma-separated `tags` query parameter. Normalization
+// (lower-casing, de-duplication) is the repository's job, so "GDPR, iso27001"
+// and "gdpr,iso27001" filter alike.
+func splitTags(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	return strings.Split(raw, ",")
+}
+
+// setTagsInput is the body of PUT /flow/id/:id/tags. `mode` is "set" (the
+// default — the list becomes exactly these) or "merge" (add these, keep the
+// rest). An empty list with mode "set" clears the flow's tags.
+type setTagsInput struct {
+	Tags []string `json:"tags"`
+	Mode string   `json:"mode"`
+}
+
+// setTags handles PUT /flow/id/:id/tags — relabel a saved flow without
+// round-tripping its graph.
+//
+// A flow's tags are what a consumer filters the flow list by, and they are set
+// from two sides: the author on the canvas, and whatever installed the flow
+// (SurfStat stamping the framework a flow came with). The second has no
+// business reading, re-sending and possibly stale-overwriting a 35 KB
+// view_flow just to add a label, which is why this is its own route.
+func (ctl *controller) setTags(c fiber.Ctx) error {
+	var in setTagsInput
+	if err := c.Bind().Body(&in); err != nil {
+		return etc.Fail(c, fiber.StatusBadRequest, "invalid tags payload")
+	}
+	switch in.Mode {
+	case "", "set", "merge":
+	default:
+		return etc.Fail(c, fiber.StatusBadRequest, `mode must be "set" or "merge"`)
+	}
+	rec, err := ctl.repo.GetByID(c.Context(), c.Params("id"))
+	if err != nil {
+		return etc.FailFromRepo(c, err, "workflow not found")
+	}
+	if in.Tags == nil {
+		in.Tags = []string{}
+	}
+	if in.Mode == "merge" {
+		rec.Tags = append(append([]string{}, rec.Tags...), in.Tags...)
+	} else {
+		rec.Tags = in.Tags
+	}
+	if err := ctl.repo.Upsert(c.Context(), rec); err != nil {
+		return etc.FailFromRepo(c, err, "workflow not found")
+	}
+	wslog.Emit("flow.changed", fiber.Map{"id": rec.ID, "source": "api"})
+	return etc.OK(c, fiber.Map{"id": rec.ID, "tags": rec.Tags})
 }
 
 // getByID handles GET /flow/id/:id.

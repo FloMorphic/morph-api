@@ -277,12 +277,13 @@ func (s *store) Close() error {
 
 // applyMigrations runs additive schema changes on a database created by an
 // earlier version. postgres takes `ADD COLUMN IF NOT EXISTS`, so unlike the
-// sqlite backend each statement is idempotent on its own and no error has to be
-// swallowed. The list is empty because schema.sql is this backend's first
-// version — every column it will ever have is already in there. New columns go
-// here (never into schema.sql alone, which never touches an existing table).
+// sqlite backend each statement is idempotent on its own (ADD COLUMN IF NOT
+// EXISTS) and no error has to be swallowed. New columns go here as well as into
+// schema.sql, which never touches an existing table.
 func applyMigrations(ctx context.Context, db *sql.DB) error {
-	migrations := []string{}
+	migrations := []string{
+		`ALTER TABLE workflows ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]'`,
+	}
 	for _, stmt := range migrations {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("%q: %w", stmt, err)

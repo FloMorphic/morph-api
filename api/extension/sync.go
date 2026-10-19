@@ -25,10 +25,22 @@ import (
 // mentions, are deleted, which is what makes a removed method disappear from the
 // palette instead of lingering as a node that no longer resolves.
 //
-// Reusing the row rather than replacing it matters because the id is what a
-// saved workflow stores: deleting and re-inserting would hand every node on the
-// canvas a stale reference after a routine re-sync. The plugin's own
-// registration row is never touched — it is the user's, not the plugin's.
+// Reusing the row rather than replacing it keeps `extensionId` — which a saved
+// node carries as its palette provenance — resolvable across a routine re-sync.
+//
+// That is hygiene, NOT a safety property, and the difference is worth being
+// precise about because it is easy to read a re-sync as dangerous and build
+// guards around a risk that does not exist. A node is a NATS subject:
+// `inflow.cpu.<pluginId>.<action>`. A saved node carries `pluginId`, `action`,
+// its `form` and its settings denormalized onto itself, and the runtime builds
+// the subject from those — nothing in the execution path reads `extensionId`.
+// So churning the action rows cannot break a flow: as long as something is
+// listening on the subject, the node works.
+//
+// What makes that hold is the next line: the plugin's own registration row is
+// never touched — it is the user's, not the plugin's — so the plugin id, and
+// with it every subject a saved node calls, survives any number of syncs.
+// Re-registering a plugin is therefore safe while its flows are running.
 //
 // The settings form from `@intro` is deliberately NOT stored. It is the shape of
 // a settings profile, and profiles live under `/settings` keyed by plugin id;

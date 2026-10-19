@@ -19,7 +19,7 @@ type Querier interface {
 	CountProcesses(ctx context.Context, arg CountProcessesParams) (int64, error)
 	CountPrompts(ctx context.Context, search interface{}) (int64, error)
 	CountTriggers(ctx context.Context, arg CountTriggersParams) (int64, error)
-	CountWorkflows(ctx context.Context, search interface{}) (int64, error)
+	CountWorkflows(ctx context.Context, arg CountWorkflowsParams) (int64, error)
 	CreateMemoryStore(ctx context.Context, arg CreateMemoryStoreParams) error
 	DeleteConnectConnection(ctx context.Context, id string) (int64, error)
 	DeleteContext(ctx context.Context, id string) (int64, error)
@@ -67,6 +67,9 @@ type Querier interface {
 	ListPrompts(ctx context.Context, arg ListPromptsParams) ([]Prompt, error)
 	ListTelegramRecipients(ctx context.Context, arg ListTelegramRecipientsParams) ([]TelegramRecipient, error)
 	ListTriggers(ctx context.Context, arg ListTriggersParams) ([]Trigger, error)
+	// The tag predicate is a match-ANY membership test: @tags is the filter as
+	// ",a,b," (repository.TagFilter) and json_each walks the row's own array, so
+	// `instr` of ",<tag>," is an exact element match. '' means "no filter".
 	ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]Workflow, error)
 	SetConnectDefault(ctx context.Context, arg SetConnectDefaultParams) (int64, error)
 	UpdateProcess(ctx context.Context, arg UpdateProcessParams) (int64, error)

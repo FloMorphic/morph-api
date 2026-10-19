@@ -193,6 +193,7 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE processes ADD COLUMN snapshot TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE processes ADD COLUMN errors TEXT NOT NULL DEFAULT '{}'`,
 		`ALTER TABLE connect_connections ADD COLUMN admin_token TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE workflows ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'`,
 	}
 	for _, stmt := range migrations {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

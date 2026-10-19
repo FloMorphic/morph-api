@@ -162,6 +162,7 @@ type Workflow struct {
 	ID        string
 	Title     string
 	ViewFlow  string
+	Tags      string
 	CreatedAt int64
 	UpdatedAt int64
 }

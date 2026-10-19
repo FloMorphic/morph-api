@@ -12,10 +12,18 @@ import (
 const countWorkflows = `-- name: CountWorkflows :one
 SELECT COUNT(*) FROM workflows
 WHERE (?1 = '' OR title LIKE '%' || ?1 || '%')
+  AND (?2 = '' OR EXISTS (
+        SELECT 1 FROM json_each(workflows.tags) AS tag
+        WHERE instr(?2, ',' || tag.value || ',') > 0))
 `
 
-func (q *Queries) CountWorkflows(ctx context.Context, search interface{}) (int64, error) {
-	row := q.db.QueryRowContext(ctx, countWorkflows, search)
+type CountWorkflowsParams struct {
+	Search interface{}
+	Tags   interface{}
+}
+
+func (q *Queries) CountWorkflows(ctx context.Context, arg CountWorkflowsParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countWorkflows, arg.Search, arg.Tags)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -34,7 +42,7 @@ func (q *Queries) DeleteWorkflow(ctx context.Context, id string) (int64, error) 
 }
 
 const getWorkflow = `-- name: GetWorkflow :one
-SELECT id, title, view_flow, created_at, updated_at FROM workflows WHERE id = ?1
+SELECT id, title, view_flow, tags, created_at, updated_at FROM workflows WHERE id = ?1
 `
 
 func (q *Queries) GetWorkflow(ctx context.Context, id string) (Workflow, error) {
@@ -44,6 +52,7 @@ func (q *Queries) GetWorkflow(ctx context.Context, id string) (Workflow, error) 
 		&i.ID,
 		&i.Title,
 		&i.ViewFlow,
+		&i.Tags,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -51,20 +60,33 @@ func (q *Queries) GetWorkflow(ctx context.Context, id string) (Workflow, error) 
 }
 
 const listWorkflows = `-- name: ListWorkflows :many
-SELECT id, title, view_flow, created_at, updated_at FROM workflows
+
+SELECT id, title, view_flow, tags, created_at, updated_at FROM workflows
 WHERE (?1 = '' OR title LIKE '%' || ?1 || '%')
+  AND (?2 = '' OR EXISTS (
+        SELECT 1 FROM json_each(workflows.tags) AS tag
+        WHERE instr(?2, ',' || tag.value || ',') > 0))
 ORDER BY updated_at DESC, id DESC
-LIMIT ?3 OFFSET ?2
+LIMIT ?4 OFFSET ?3
 `
 
 type ListWorkflowsParams struct {
 	Search interface{}
+	Tags   interface{}
 	Offset int64
 	Limit  int64
 }
 
+// The tag predicate is a match-ANY membership test: @tags is the filter as
+// ",a,b," (repository.TagFilter) and json_each walks the row's own array, so
+// `instr` of ",<tag>," is an exact element match. ” means "no filter".
 func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]Workflow, error) {
-	rows, err := q.db.QueryContext(ctx, listWorkflows, arg.Search, arg.Offset, arg.Limit)
+	rows, err := q.db.QueryContext(ctx, listWorkflows,
+		arg.Search,
+		arg.Tags,
+		arg.Offset,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -76,6 +98,7 @@ func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([
 			&i.ID,
 			&i.Title,
 			&i.ViewFlow,
+			&i.Tags,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -93,11 +116,12 @@ func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([
 }
 
 const upsertWorkflow = `-- name: UpsertWorkflow :exec
-INSERT INTO workflows (id, title, view_flow, created_at, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5)
+INSERT INTO workflows (id, title, view_flow, tags, created_at, updated_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6)
 ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
     view_flow = excluded.view_flow,
+    tags = excluded.tags,
     updated_at = excluded.updated_at
 `
 
@@ -105,6 +129,7 @@ type UpsertWorkflowParams struct {
 	ID        string
 	Title     string
 	ViewFlow  string
+	Tags      string
 	CreatedAt int64
 	UpdatedAt int64
 }
@@ -114,6 +139,7 @@ func (q *Queries) UpsertWorkflow(ctx context.Context, arg UpsertWorkflowParams) 
 		arg.ID,
 		arg.Title,
 		arg.ViewFlow,
+		arg.Tags,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

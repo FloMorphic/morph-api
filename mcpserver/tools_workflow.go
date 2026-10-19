@@ -40,7 +40,8 @@ func registerWorkflowTools(s *server.MCPServer, store repository.Store) {
 
 	s.AddTool(mcp.NewTool("flo_list_workflows",
 		withOpts(pageArgs(),
-			mcp.WithDescription("List saved workflows (FlowRecord), newest first, paginated."),
+			mcp.WithDescription("List saved workflows (FlowRecord), newest first, paginated. `tags` narrows the list to flows carrying at least one of the given labels."),
+			mcp.WithString("tags", mcp.Description("optional comma-separated labels; a flow is kept when it carries at least one of them")),
 		)...,
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		items, total, err := repo.List(ctx, listParams(req))
@@ -93,12 +94,14 @@ func registerWorkflowTools(s *server.MCPServer, store repository.Store) {
 		mcp.WithObject("workflow", mcp.Required(), mcp.Description("the workflow document: {flomorphic?, title?, plugins?, nodes[], edges[]}")),
 		mcp.WithString("id", mcp.Description("workflow id to overwrite (a re-install); empty creates a new one")),
 		mcp.WithString("title", mcp.Description("overrides the document's own title")),
+		mcp.WithArray("tags", mcp.Description("overrides the document's own tags — the labels a flow list is filtered by; omit to keep the document's")),
 		mcp.WithBoolean("dryRun", mcp.Description("plan, stamp and compile-check without saving")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		var in struct {
 			Workflow json.RawMessage `json:"workflow"`
 			ID       string          `json:"id"`
 			Title    string          `json:"title"`
+			Tags     []string        `json:"tags"`
 			DryRun   bool            `json:"dryRun"`
 		}
 		if err := req.BindArguments(&in); err != nil {
@@ -108,7 +111,7 @@ func registerWorkflowTools(s *server.MCPServer, store repository.Store) {
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		res, bad := importDocument(ctx, store, flowfile.Input{Doc: doc, ID: in.ID, Title: in.Title, DryRun: in.DryRun})
+		res, bad := importDocument(ctx, store, flowfile.Input{Doc: doc, ID: in.ID, Title: in.Title, Tags: in.Tags, DryRun: in.DryRun})
 		if bad != nil {
 			return bad, nil
 		}

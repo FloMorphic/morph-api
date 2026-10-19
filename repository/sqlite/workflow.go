@@ -26,6 +26,13 @@ func (r *workflowRepo) Upsert(ctx context.Context, w *models.FlowRecord) error {
 	} else if existing, err := r.GetByID(ctx, w.ID); err == nil {
 		// Update: keep the original creation time.
 		w.CreatedAt = existing.CreatedAt
+		// …and the stored tags, unless this save carries its own. A nil Tags is
+		// a client that said nothing about them (an MCP patch, the editor
+		// before tags existed), and must not strip the labels a package
+		// stamped on the flow; an empty non-nil slice clears them.
+		if w.Tags == nil {
+			w.Tags = existing.Tags
+		}
 	} else if errors.Is(err, repository.ErrNotFound) {
 		if w.CreatedAt == 0 {
 			w.CreatedAt = now
@@ -34,6 +41,7 @@ func (r *workflowRepo) Upsert(ctx context.Context, w *models.FlowRecord) error {
 		return err
 	}
 	w.UpdatedAt = now
+	w.Tags = models.NormalizeTags(w.Tags)
 
 	viewFlow, err := json.Marshal(w.ViewFlow)
 	if err != nil {
@@ -43,6 +51,7 @@ func (r *workflowRepo) Upsert(ctx context.Context, w *models.FlowRecord) error {
 		ID:        w.ID,
 		Title:     w.Title,
 		ViewFlow:  string(viewFlow),
+		Tags:      marshalTags(w.Tags),
 		CreatedAt: w.CreatedAt,
 		UpdatedAt: w.UpdatedAt,
 	})
@@ -61,12 +70,14 @@ func (r *workflowRepo) GetByID(ctx context.Context, id string) (*models.FlowReco
 
 func (r *workflowRepo) List(ctx context.Context, p repository.ListParams) ([]models.FlowRecord, int64, error) {
 	limit := clampLimit(p.Limit)
-	total, err := r.q.CountWorkflows(ctx, p.Search)
+	tags := repository.TagFilter(p.Tags)
+	total, err := r.q.CountWorkflows(ctx, sqlcgen.CountWorkflowsParams{Search: p.Search, Tags: tags})
 	if err != nil {
 		return nil, 0, err
 	}
 	rows, err := r.q.ListWorkflows(ctx, sqlcgen.ListWorkflowsParams{
 		Search: p.Search,
+		Tags:   tags,
 		Offset: int64(p.Offset),
 		Limit:  int64(limit),
 	})
@@ -99,6 +110,7 @@ func workflowFromRow(row sqlcgen.Workflow) (*models.FlowRecord, error) {
 	rec := &models.FlowRecord{
 		ID:        row.ID,
 		Title:     row.Title,
+		Tags:      unmarshalTags(row.Tags),
 		CreatedAt: row.CreatedAt,
 		UpdatedAt: row.UpdatedAt,
 	}
@@ -108,4 +120,33 @@ func workflowFromRow(row sqlcgen.Workflow) (*models.FlowRecord, error) {
 		}
 	}
 	return rec, nil
+}
+
+// marshalTags renders a tag list for the column. The column is NOT NULL and the
+// tag predicate feeds it to json_each, so it always holds a JSON array — never
+// "" and never null.
+func marshalTags(tags []string) string {
+	if len(tags) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(tags)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+// unmarshalTags decodes a tag column, tolerating the empty text an
+// un-migrated row could hold. It returns nil for "no tags", which is what the
+// model's omitempty wants, and leaves the stored value in place on an upsert
+// (see Upsert) — a read never has to distinguish nil from empty.
+func unmarshalTags(s string) []string {
+	if s == "" || s == "[]" {
+		return nil
+	}
+	var out []string
+	if json.Unmarshal([]byte(s), &out) != nil || len(out) == 0 {
+		return nil
+	}
+	return out
 }

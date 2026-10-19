@@ -67,12 +67,17 @@ type PluginManifestEntry struct {
 // Parse accepts any object with a `nodes` array, header or not, so a bare patch
 // a model wrote is as importable as a file the editor exported.
 type Document struct {
-	Flomorphic *Header               `json:"flomorphic,omitempty"`
-	Title      string                `json:"title,omitempty"`
-	Plugins    []PluginManifestEntry `json:"plugins,omitempty"`
-	Nodes      []designer.PatchNode  `json:"nodes"`
-	Edges      []designer.PatchEdge  `json:"edges,omitempty"`
-	Notes      []string              `json:"notes,omitempty"`
+	Flomorphic *Header `json:"flomorphic,omitempty"`
+	Title      string  `json:"title,omitempty"`
+	// Tags travels with the design: a flow exported from a labelled canvas
+	// keeps its labels wherever it lands, so the tag filter works on the
+	// target install without anyone relabelling by hand. An importer may
+	// override them (see Input.Tags).
+	Tags    []string              `json:"tags,omitempty"`
+	Plugins []PluginManifestEntry `json:"plugins,omitempty"`
+	Nodes   []designer.PatchNode  `json:"nodes"`
+	Edges   []designer.PatchEdge  `json:"edges,omitempty"`
+	Notes   []string              `json:"notes,omitempty"`
 }
 
 // Patch is the document's graph patch, ready for the designer planner.
@@ -103,6 +108,10 @@ type Input struct {
 	ID string
 	// Overrides the document's own title when set.
 	Title string
+	// Overrides the document's own tags when non-nil — what an installer that
+	// knows which framework the flow belongs to stamps on it. Nil keeps the
+	// document's tags; empty imports the flow with none.
+	Tags []string
 	// Plan, stamp and compile-check without saving.
 	DryRun bool
 }
@@ -184,7 +193,12 @@ func Import(ctx context.Context, store repository.Store, in Input) (*Result, err
 	// Re-attach profiles the document carried by reference; see the function.
 	resolveSettingsProfiles(ctx, store, &graph)
 
-	rec := models.FlowRecord{ID: strings.TrimSpace(in.ID), Title: title, ViewFlow: graph}
+	tags := in.Tags
+	if tags == nil {
+		tags = doc.Tags
+	}
+
+	rec := models.FlowRecord{ID: strings.TrimSpace(in.ID), Title: title, Tags: tags, ViewFlow: graph}
 	inflow.NormalizeGraph(&rec)
 
 	res := &Result{Problems: problems, MissingActions: missing, DryRun: in.DryRun}
@@ -294,6 +308,7 @@ func Export(ctx context.Context, store repository.Store, rec models.FlowRecord) 
 	return Document{
 		Flomorphic: &Header{Kind: "workflow", Version: Version, ExportedAt: time.Now().UTC().Format(time.RFC3339)},
 		Title:      title,
+		Tags:       rec.Tags,
 		Plugins:    pluginManifest(ctx, store, rec.ViewFlow),
 		Nodes:      patch.Nodes,
 		Edges:      patch.Edges,

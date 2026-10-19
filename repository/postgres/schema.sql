@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS workflows (
     id         TEXT   PRIMARY KEY,
     title      TEXT   NOT NULL DEFAULT '',
     view_flow  TEXT   NOT NULL DEFAULT '{}',
+    -- Free-form labels, a JSON array, filtered by GET /flow?tags= (match any).
+    tags       TEXT   NOT NULL DEFAULT '[]',
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL
 );

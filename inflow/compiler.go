@@ -119,17 +119,17 @@ func NodeBuilder(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
 	if !ok {
 		return nil, fmt.Errorf("invalid node data ")
 	}
+	// Read defensively (getStr). A graph reaching the compiler is not always
+	// one the editor drew: a document posted to /flow/import or handed to an
+	// MCP tool can name a node without a title, and an unchecked type
+	// assertion here panicked the request handler rather than returning an
+	// error the caller could read.
 	node := inflowModels.Node{
 		ID:    vfn.ID,
-		Title: nodeData["title"].(string),
+		Title: getStr(nodeData, "title"),
 	}
-	if nodeData["key"] != nil {
-		node.Key = nodeData["key"].(string)
-	}
-	if nodeData["scope"] != nil {
-		node.Scope = nodeData["scope"].(string)
-
-	}
+	node.Key = getStr(nodeData, "key")
+	node.Scope = getStr(nodeData, "scope")
 	var err error
 	switch vfn.Type {
 	case NODE_START, NODE_PROMISEALL, NODE_VOID:

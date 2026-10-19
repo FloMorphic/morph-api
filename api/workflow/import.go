@@ -25,6 +25,11 @@ type importInput struct {
 	ID string `json:"id"`
 	// Overrides the document's own title when set.
 	Title string `json:"title"`
+	// Overrides the document's own tags when present — what an installer that
+	// knows which framework this flow belongs to stamps on it, so the flow
+	// picker on the far side can narrow to that framework. Absent keeps the
+	// document's tags; `[]` imports the flow with none.
+	Tags []string `json:"tags"`
 	// Plan and report without saving.
 	DryRun bool `json:"dryRun"`
 	// The export document itself.
@@ -44,7 +49,7 @@ func (ctl *controller) importFlow(c fiber.Ctx) error {
 	if err != nil {
 		return etc.Fail(c, fiber.StatusBadRequest, err.Error())
 	}
-	res, err := flowfile.Import(c.Context(), ctl.store, flowfile.Input{Doc: doc, ID: in.ID, Title: in.Title, DryRun: in.DryRun})
+	res, err := flowfile.Import(c.Context(), ctl.store, flowfile.Input{Doc: doc, ID: in.ID, Title: in.Title, Tags: in.Tags, DryRun: in.DryRun})
 	if err != nil {
 		if errors.Is(err, flowfile.ErrInvalid) {
 			return etc.Fail(c, fiber.StatusBadRequest, err.Error())
