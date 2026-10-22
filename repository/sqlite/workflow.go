@@ -33,6 +33,12 @@ func (r *workflowRepo) Upsert(ctx context.Context, w *models.FlowRecord) error {
 		if w.Tags == nil {
 			w.Tags = existing.Tags
 		}
+		// The same contract for the preferences: nil says nothing (keep the
+		// stored entry form — a graph-only save from any client must not drop
+		// it), a non-nil value with no entry clears them.
+		if w.Preferences == nil {
+			w.Preferences = existing.Preferences
+		}
 	} else if errors.Is(err, repository.ErrNotFound) {
 		if w.CreatedAt == 0 {
 			w.CreatedAt = now
@@ -42,18 +48,24 @@ func (r *workflowRepo) Upsert(ctx context.Context, w *models.FlowRecord) error {
 	}
 	w.UpdatedAt = now
 	w.Tags = models.NormalizeTags(w.Tags)
+	w.Preferences = w.Preferences.Normalize()
 
 	viewFlow, err := json.Marshal(w.ViewFlow)
 	if err != nil {
 		return fmt.Errorf("sqlite: marshal view_flow: %w", err)
 	}
+	preferences, err := marshalPreferences(w.Preferences)
+	if err != nil {
+		return fmt.Errorf("sqlite: marshal preferences: %w", err)
+	}
 	return r.q.UpsertWorkflow(ctx, sqlcgen.UpsertWorkflowParams{
-		ID:        w.ID,
-		Title:     w.Title,
-		ViewFlow:  string(viewFlow),
-		Tags:      marshalTags(w.Tags),
-		CreatedAt: w.CreatedAt,
-		UpdatedAt: w.UpdatedAt,
+		ID:          w.ID,
+		Title:       w.Title,
+		ViewFlow:    string(viewFlow),
+		Tags:        marshalTags(w.Tags),
+		Preferences: preferences,
+		CreatedAt:   w.CreatedAt,
+		UpdatedAt:   w.UpdatedAt,
 	})
 }
 
@@ -107,12 +119,17 @@ func (r *workflowRepo) Delete(ctx context.Context, id string) error {
 }
 
 func workflowFromRow(row sqlcgen.Workflow) (*models.FlowRecord, error) {
+	prefs, err := unmarshalPreferences(row.Preferences)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: unmarshal preferences for %s: %w", row.ID, err)
+	}
 	rec := &models.FlowRecord{
-		ID:        row.ID,
-		Title:     row.Title,
-		Tags:      unmarshalTags(row.Tags),
-		CreatedAt: row.CreatedAt,
-		UpdatedAt: row.UpdatedAt,
+		ID:          row.ID,
+		Title:       row.Title,
+		Tags:        unmarshalTags(row.Tags),
+		Preferences: prefs,
+		CreatedAt:   row.CreatedAt,
+		UpdatedAt:   row.UpdatedAt,
 	}
 	if row.ViewFlow != "" {
 		if err := json.Unmarshal([]byte(row.ViewFlow), &rec.ViewFlow); err != nil {
@@ -149,4 +166,35 @@ func unmarshalTags(s string) []string {
 		return nil
 	}
 	return out
+}
+
+// marshalPreferences renders a flow's preferences for the column. The column is
+// NOT NULL, so "no preferences" is stored as `{}` — never "" and never null.
+func marshalPreferences(p *models.FlowPreferences) (string, error) {
+	if p.IsEmpty() {
+		return "{}", nil
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// unmarshalPreferences decodes the column, tolerating the empty text an
+// un-migrated row holds. It returns nil for "none", which is what the model's
+// "a save that says nothing keeps what is stored" contract reads as — a read
+// never has to tell nil from empty (see Upsert).
+func unmarshalPreferences(s string) (*models.FlowPreferences, error) {
+	if s == "" || s == "{}" || s == "null" {
+		return nil, nil
+	}
+	var p models.FlowPreferences
+	if err := json.Unmarshal([]byte(s), &p); err != nil {
+		return nil, err
+	}
+	if p.Normalize().IsEmpty() {
+		return nil, nil
+	}
+	return &p, nil
 }

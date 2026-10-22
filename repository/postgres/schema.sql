@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS workflows (
     view_flow  TEXT   NOT NULL DEFAULT '{}',
     -- Free-form labels, a JSON array, filtered by GET /flow?tags= (match any).
     tags       TEXT   NOT NULL DEFAULT '[]',
+    -- Flow-level, non-graph choices as a JSON object (models.FlowPreferences) —
+    -- today the entry form a flow asks to have filled in before it runs.
+    preferences TEXT  NOT NULL DEFAULT '{}',
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL
 );

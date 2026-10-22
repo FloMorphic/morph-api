@@ -22,15 +22,16 @@ import (
 //   - `ORDER BY updated_at DESC, id DESC` paging, matching the sqlite queries so
 //     a page holds the same rows on either backend.
 const (
-	workflowColumns = `id, title, view_flow, tags, created_at, updated_at`
+	workflowColumns = `id, title, view_flow, tags, preferences, created_at, updated_at`
 
 	workflowUpsertSQL = `
-INSERT INTO workflows (id, title, view_flow, tags, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO workflows (id, title, view_flow, tags, preferences, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (id) DO UPDATE SET
     title = EXCLUDED.title,
     view_flow = EXCLUDED.view_flow,
     tags = EXCLUDED.tags,
+    preferences = EXCLUDED.preferences,
     updated_at = EXCLUDED.updated_at`
 
 	// The tag predicate is a match-ANY membership test, the twin of the sqlite
@@ -62,6 +63,11 @@ func (r *workflowRepo) Upsert(ctx context.Context, w *models.FlowRecord) error {
 		if w.Tags == nil {
 			w.Tags = existing.Tags
 		}
+		// The same for the preferences: a graph-only save keeps the stored entry
+		// form, a non-nil value with no entry clears it.
+		if w.Preferences == nil {
+			w.Preferences = existing.Preferences
+		}
 	} else if errors.Is(err, repository.ErrNotFound) {
 		if w.CreatedAt == 0 {
 			w.CreatedAt = now
@@ -71,13 +77,18 @@ func (r *workflowRepo) Upsert(ctx context.Context, w *models.FlowRecord) error {
 	}
 	w.UpdatedAt = now
 	w.Tags = models.NormalizeTags(w.Tags)
+	w.Preferences = w.Preferences.Normalize()
 
 	viewFlow, err := json.Marshal(w.ViewFlow)
 	if err != nil {
 		return fmt.Errorf("postgres: marshal view_flow: %w", err)
 	}
+	preferences, err := marshalPreferences(w.Preferences)
+	if err != nil {
+		return fmt.Errorf("postgres: marshal preferences: %w", err)
+	}
 	_, err = r.db.ExecContext(ctx, workflowUpsertSQL,
-		w.ID, w.Title, string(viewFlow), marshalTags(w.Tags), w.CreatedAt, w.UpdatedAt)
+		w.ID, w.Title, string(viewFlow), marshalTags(w.Tags), preferences, w.CreatedAt, w.UpdatedAt)
 	return err
 }
 
@@ -123,14 +134,20 @@ func (r *workflowRepo) Delete(ctx context.Context, id string) error {
 
 func scanWorkflow(row scanner) (*models.FlowRecord, error) {
 	var (
-		rec      models.FlowRecord
-		viewFlow string
-		tags     string
+		rec         models.FlowRecord
+		viewFlow    string
+		tags        string
+		preferences string
 	)
-	if err := row.Scan(&rec.ID, &rec.Title, &viewFlow, &tags, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+	if err := row.Scan(&rec.ID, &rec.Title, &viewFlow, &tags, &preferences, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
 		return nil, notFound(err)
 	}
 	rec.Tags = unmarshalTags(tags)
+	prefs, err := unmarshalPreferences(preferences)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: unmarshal preferences for %s: %w", rec.ID, err)
+	}
+	rec.Preferences = prefs
 	if viewFlow != "" {
 		if err := json.Unmarshal([]byte(viewFlow), &rec.ViewFlow); err != nil {
 			return nil, fmt.Errorf("postgres: unmarshal view_flow for %s: %w", rec.ID, err)
@@ -187,6 +204,35 @@ func unmarshalTags(s string) []string {
 		return nil
 	}
 	return out
+}
+
+// marshalPreferences / unmarshalPreferences are the postgres twins of the
+// sqlite pair: "no preferences" is the NOT NULL column's `{}`, and a read gives
+// back nil for it so a later save that says nothing about preferences keeps
+// what is stored (see Upsert).
+func marshalPreferences(p *models.FlowPreferences) (string, error) {
+	if p.IsEmpty() {
+		return "{}", nil
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func unmarshalPreferences(s string) (*models.FlowPreferences, error) {
+	if s == "" || s == "{}" || s == "null" {
+		return nil, nil
+	}
+	var p models.FlowPreferences
+	if err := json.Unmarshal([]byte(s), &p); err != nil {
+		return nil, err
+	}
+	if p.Normalize().IsEmpty() {
+		return nil, nil
+	}
+	return &p, nil
 }
 
 // marshalObject renders a free-form object column, defaulting a nil map to "{}"

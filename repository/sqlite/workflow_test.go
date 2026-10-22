@@ -113,3 +113,57 @@ func TestWorkflowTags(t *testing.T) {
 		t.Fatalf("after clearing, filter = %q", got)
 	}
 }
+
+// A flow's preferences (its entry form) follow the same "a save that says
+// nothing keeps what is stored" contract the tags do — the one thing that keeps
+// a graph-only save, from any client, from dropping the form a flow needs.
+func TestWorkflowPreferences(t *testing.T) {
+	store, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	flows := store.Workflows()
+
+	rec := &models.FlowRecord{Title: "needs input", Preferences: &models.FlowPreferences{Entry: &models.EntryForm{
+		Title:    "Order",
+		Form:     models.FormParameters{Schema: map[string]any{"type": "object", "properties": map[string]any{"orderId": map[string]any{"type": "string"}}}},
+		Target:   "$.input.form",
+		Prefill:  models.PrefillLive,
+		Required: true,
+	}}}
+	if err := flows.Upsert(ctx, rec); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	again, err := flows.GetByID(ctx, rec.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := again.Preferences.EntryOrNil()
+	if entry == nil {
+		t.Fatal("preferences did not round-trip")
+	}
+	if entry.TargetPath() != "$.input.form" || entry.PrefillOrDefault() != models.PrefillLive || !entry.Required {
+		t.Errorf("entry = %+v", entry)
+	}
+
+	// A save that says nothing about them keeps them…
+	if err := flows.Upsert(ctx, &models.FlowRecord{ID: rec.ID, Title: "needs input"}); err != nil {
+		t.Fatalf("upsert without preferences: %v", err)
+	}
+	again, _ = flows.GetByID(ctx, rec.ID)
+	if again.Preferences.EntryOrNil() == nil {
+		t.Fatal("a preference-less save dropped the entry form")
+	}
+
+	// …and a non-nil value with no entry clears them.
+	if err := flows.Upsert(ctx, &models.FlowRecord{ID: rec.ID, Title: "needs input", Preferences: &models.FlowPreferences{}}); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	again, _ = flows.GetByID(ctx, rec.ID)
+	if again.Preferences != nil {
+		t.Errorf("preferences = %+v, want cleared", again.Preferences)
+	}
+}

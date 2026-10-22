@@ -27,6 +27,11 @@ func Register(api fiber.Router, store repository.Store) {
 	g.Get("/id/:id", ctl.getByID)
 	// Relabel a flow (the tag filter's write side) without resending its graph.
 	g.Put("/id/:id/tags", ctl.setTags)
+	// The flow's preferences — its entry form — read and written on their own,
+	// plus that form resolved for one launch (see preferences.go).
+	g.Get("/id/:id/preferences", ctl.getPreferences)
+	g.Put("/id/:id/preferences", ctl.setPreferences)
+	g.Get("/id/:id/entry", ctl.getEntry)
 	g.Get("/id/:id/export", ctl.exportFlow)
 	g.Get("/id/:id/compile", ctl.compile)
 	g.Delete("/id/:id", ctl.deleteByID)

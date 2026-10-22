@@ -28,13 +28,43 @@ That object must be valid JSON, and the usual thing that breaks it is code. A `l
   ],
   "notes": [
     "anything the designer must fill in by hand"
-  ]
+  ],
+  "preferences": {
+    "entry": {
+      "title": "Order to review",
+      "form": { "schema": { "type": "object", "properties": { "orderId": { "type": "string" } }, "required": ["orderId"] } },
+      "target": "$._entry",
+      "prefill": "default",
+      "required": true
+    }
+  }
 }
 ```
 
 - `ref` is a short local name you invent; `edges` refer to nodes by `ref`. Real canvas ids are assigned on import.
 - Every node carries `title` (label), `key` (where its output is written into the Context) and `scope` (the JSONPath slice it reads/writes, usually `$`).
 - `key` names the node's output inside its scope, and naming one is usually right — it is how a later node addresses this result (`{{$.summary}}`, `_get("$.summary")`). Leaving `key` empty is the deliberate alternative: the node commits AT its scope, so an object result is merged into the Context at that point (with `scope: "$"`, its fields land at the top level) — good for a node that contributes fields to a shared record rather than a result of its own. A non-object result from a key-less node has nowhere to go and lands under `unknow`, so give any node that emits a plain value a `key`.
+
+## The input a flow asks for: `preferences.entry`
+A flow that needs data it cannot fetch itself — the order to review, the threshold to apply, the recipient — declares an ENTRY FORM instead of a node that invents it. It is optional; a flow that needs nothing omits `preferences` entirely.
+
+```json
+"preferences": { "entry": {
+  "title": "…", "description": "…",
+  "form": { "schema": {…}, "ui": {…} },
+  "target": "$._entry", "prefill": "default", "required": false
+} }
+```
+
+- `form.schema` is EITHER a JSON Schema (the fields, their types, defaults, enums and `required`) OR a plain JSON object of the values to seed. The first gets a full form; the second is the quick way to hand a flow a fixed shape. A document counts as a schema when it declares `$schema` or a non-empty `properties`.
+- `form.ui` is an optional JSON Forms UI schema (layout, widgets) for a JSON Schema form.
+- `target` is the ONE context location the answers are written to — `$._entry` by default. It is a plain member path (`$`, `$._entry`, `$.input.order`); missing objects along it are created, and nothing else in the Context is touched. Array, wildcard and filter paths are refused: a write needs exactly one destination.
+- `prefill` is `default` (start the fields at the schema's own defaults) or `live` (start them at whatever already sits at `target` in the context this run goes against).
+- `required: true` refuses a launch that supplies nothing and finds nothing at the target.
+
+**Treat the entry as input that may not arrive.** Filling the form is the launcher's choice, not a guarantee: a run can be started with no values at all (a trigger, a schedule, an agent, `required: false`), a field with no default comes through absent, and a field the person cleared comes through `null` or `""`. So never read `{{$._entry.x}}` as if it must be there. If the flow genuinely cannot proceed without a field, put a `js` node right after the start node that CHECKS it — read the values with `_get("$._entry")`, and on a missing or empty field either supply the fallback the flow should use or route to a branch that reports it — and have the rest of the graph depend on that node's output rather than on the raw entry. Marking the entry `required: true` refuses an empty launch at the door, but it does not make any individual field non-null, and it says nothing about a field whose schema does not require it.
+
+**Declare an entry instead of seeding the Context with a `js` node.** The pattern of wiring a `js` node after the start node whose only job is to `return {…}` a fixed shape is exactly what this replaces: the data arrives validated, before the first node runs, from whoever launched the flow. Downstream nodes then read it like anything else — `{{$._entry.orderId}}`, `_get("$._entry.orderId")`. Keep a `js` node for data the flow must *derive*, not for data it must be *given*.
 
 ## Scope — and the loop it hides
 `scope` is a full JSONPath: dotted paths, wildcards, expressions and filter queries all work.

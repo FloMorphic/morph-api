@@ -24,6 +24,7 @@ Patch shape:
 - nodes: [{ ref, kind, title, key?, scope?, data?, note? }]. ref is a local name YOU invent; edges refer to nodes by ref (real ids are assigned on apply). scope defaults to "$". One node MUST be kind "startNode".
 - edges: [{ from, to, port?, note? }]. from/to are refs (or ids of nodes already on the canvas). port is REQUIRED only when the source has derived output ports — an LLM function name, a Rule handler name, or "_exception" — and is resolved here to the edge route tags the engine reads.
 - notes: [free-text] — anything a human must finish by hand.
+- preferences: {entry: {form: {schema, ui?}, target?, prefill?, required?}} — OPTIONAL: the input the flow asks for before it runs. Declare it instead of wiring a JS node after the start node to seed the context: the values are validated and written at the entry's target ($._entry by default), and the graph reads them as {{$._entry.<field>}}. "schema" is either a JSON Schema or a plain JSON object of values to seed. See flo_get_flow_entry for the full contract.
 
 Two rules that bite hardest (the guide explains them fully):
 - A many-valued scope ("$.items[*]") runs the node once per element — a QUEUE inside the one node, not a branch. Its text templates must read the current element with "{{$this.field}}"; "{{$.field}}" reads the root every pass. And a routing node (LLM with functions, Rule with handlers) must NOT take a many-valued scope.
@@ -78,6 +79,7 @@ func registerDesignerTools(s *server.MCPServer, store repository.Store) {
 				mcp.Items(map[string]any{"type": "object"})),
 			mcp.WithArray("edges", mcp.Description("Patch edges: [{from, to, port?, note?}]"),
 				mcp.Items(map[string]any{"type": "object"})),
+			mcp.WithObject("preferences", mcp.Description(`Optional flow preferences: {"entry": {form: {schema, ui?}, target?, prefill?, required?}} — the input the flow asks for before it runs`)),
 		}
 		return append(base, extra...)
 	}
@@ -144,9 +146,10 @@ func registerDesignerTools(s *server.MCPServer, store repository.Store) {
 // validates each node's kind and wiring, so this only guards the outer shape.
 func parsePatchInput(req mcp.CallToolRequest) (*flowfile.Document, *mcp.CallToolResult) {
 	var in struct {
-		Nodes []designer.PatchNode `json:"nodes"`
-		Edges []designer.PatchEdge `json:"edges"`
-		Notes []string             `json:"notes"`
+		Nodes       []designer.PatchNode    `json:"nodes"`
+		Edges       []designer.PatchEdge    `json:"edges"`
+		Notes       []string                `json:"notes"`
+		Preferences *models.FlowPreferences `json:"preferences"`
 	}
 	if err := req.BindArguments(&in); err != nil {
 		return nil, mcp.NewToolResultErrorFromErr("invalid patch payload", err)
@@ -154,7 +157,14 @@ func parsePatchInput(req mcp.CallToolRequest) (*flowfile.Document, *mcp.CallTool
 	if len(in.Nodes) == 0 {
 		return nil, mcp.NewToolResultError("a patch needs at least one node")
 	}
-	return &flowfile.Document{Nodes: in.Nodes, Edges: in.Edges, Notes: in.Notes}, nil
+	// A declared entry's target has to name one context location; a bad one
+	// would otherwise only surface as a failed run (see models.ParseContextPath).
+	if entry := in.Preferences.Normalize().EntryOrNil(); entry != nil {
+		if _, err := models.ParseContextPath(entry.TargetPath()); err != nil {
+			return nil, mcp.NewToolResultError(err.Error())
+		}
+	}
+	return &flowfile.Document{Nodes: in.Nodes, Edges: in.Edges, Notes: in.Notes, Preferences: in.Preferences}, nil
 }
 
 // designGuide assembles the designer prompt — designer.BuildPrompt, the single

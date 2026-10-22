@@ -42,7 +42,7 @@ func (q *Queries) DeleteWorkflow(ctx context.Context, id string) (int64, error) 
 }
 
 const getWorkflow = `-- name: GetWorkflow :one
-SELECT id, title, view_flow, tags, created_at, updated_at FROM workflows WHERE id = ?1
+SELECT id, title, view_flow, tags, preferences, created_at, updated_at FROM workflows WHERE id = ?1
 `
 
 func (q *Queries) GetWorkflow(ctx context.Context, id string) (Workflow, error) {
@@ -53,6 +53,7 @@ func (q *Queries) GetWorkflow(ctx context.Context, id string) (Workflow, error) 
 		&i.Title,
 		&i.ViewFlow,
 		&i.Tags,
+		&i.Preferences,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -61,7 +62,7 @@ func (q *Queries) GetWorkflow(ctx context.Context, id string) (Workflow, error) 
 
 const listWorkflows = `-- name: ListWorkflows :many
 
-SELECT id, title, view_flow, tags, created_at, updated_at FROM workflows
+SELECT id, title, view_flow, tags, preferences, created_at, updated_at FROM workflows
 WHERE (?1 = '' OR title LIKE '%' || ?1 || '%')
   AND (?2 = '' OR EXISTS (
         SELECT 1 FROM json_each(workflows.tags) AS tag
@@ -99,6 +100,7 @@ func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([
 			&i.Title,
 			&i.ViewFlow,
 			&i.Tags,
+			&i.Preferences,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -116,22 +118,24 @@ func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([
 }
 
 const upsertWorkflow = `-- name: UpsertWorkflow :exec
-INSERT INTO workflows (id, title, view_flow, tags, created_at, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+INSERT INTO workflows (id, title, view_flow, tags, preferences, created_at, updated_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
 ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
     view_flow = excluded.view_flow,
     tags = excluded.tags,
+    preferences = excluded.preferences,
     updated_at = excluded.updated_at
 `
 
 type UpsertWorkflowParams struct {
-	ID        string
-	Title     string
-	ViewFlow  string
-	Tags      string
-	CreatedAt int64
-	UpdatedAt int64
+	ID          string
+	Title       string
+	ViewFlow    string
+	Tags        string
+	Preferences string
+	CreatedAt   int64
+	UpdatedAt   int64
 }
 
 func (q *Queries) UpsertWorkflow(ctx context.Context, arg UpsertWorkflowParams) error {
@@ -140,6 +144,7 @@ func (q *Queries) UpsertWorkflow(ctx context.Context, arg UpsertWorkflowParams) 
 		arg.Title,
 		arg.ViewFlow,
 		arg.Tags,
+		arg.Preferences,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)

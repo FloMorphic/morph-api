@@ -73,11 +73,19 @@ type Document struct {
 	// keeps its labels wherever it lands, so the tag filter works on the
 	// target install without anyone relabelling by hand. An importer may
 	// override them (see Input.Tags).
-	Tags    []string              `json:"tags,omitempty"`
-	Plugins []PluginManifestEntry `json:"plugins,omitempty"`
-	Nodes   []designer.PatchNode  `json:"nodes"`
-	Edges   []designer.PatchEdge  `json:"edges,omitempty"`
-	Notes   []string              `json:"notes,omitempty"`
+	Tags []string `json:"tags,omitempty"`
+	// Preferences travel with the design too: a flow's entry form is part of
+	// what the flow IS — the input it asks for before it runs — not a local
+	// setting, so a flow installed from a package asks for its input on the
+	// target install exactly as it did on the one it was authored on. It
+	// carries no install-local identity (a schema and a context path), so there
+	// is nothing to re-stamp. An importer may override them (see
+	// Input.Preferences).
+	Preferences *models.FlowPreferences `json:"preferences,omitempty"`
+	Plugins     []PluginManifestEntry   `json:"plugins,omitempty"`
+	Nodes       []designer.PatchNode    `json:"nodes"`
+	Edges       []designer.PatchEdge    `json:"edges,omitempty"`
+	Notes       []string                `json:"notes,omitempty"`
 }
 
 // Patch is the document's graph patch, ready for the designer planner.
@@ -112,6 +120,10 @@ type Input struct {
 	// knows which framework the flow belongs to stamps on it. Nil keeps the
 	// document's tags; empty imports the flow with none.
 	Tags []string
+	// Overrides the document's own preferences when non-nil. Nil keeps the
+	// document's; a non-nil value with no entry imports the flow without an
+	// entry form.
+	Preferences *models.FlowPreferences
 	// Plan, stamp and compile-check without saving.
 	DryRun bool
 }
@@ -197,8 +209,12 @@ func Import(ctx context.Context, store repository.Store, in Input) (*Result, err
 	if tags == nil {
 		tags = doc.Tags
 	}
+	prefs := in.Preferences
+	if prefs == nil {
+		prefs = doc.Preferences
+	}
 
-	rec := models.FlowRecord{ID: strings.TrimSpace(in.ID), Title: title, Tags: tags, ViewFlow: graph}
+	rec := models.FlowRecord{ID: strings.TrimSpace(in.ID), Title: title, Tags: tags, Preferences: prefs.Normalize(), ViewFlow: graph}
 	inflow.NormalizeGraph(&rec)
 
 	res := &Result{Problems: problems, MissingActions: missing, DryRun: in.DryRun}
@@ -306,12 +322,13 @@ func Export(ctx context.Context, store repository.Store, rec models.FlowRecord) 
 		title = "Untitled workflow"
 	}
 	return Document{
-		Flomorphic: &Header{Kind: "workflow", Version: Version, ExportedAt: time.Now().UTC().Format(time.RFC3339)},
-		Title:      title,
-		Tags:       rec.Tags,
-		Plugins:    pluginManifest(ctx, store, rec.ViewFlow),
-		Nodes:      patch.Nodes,
-		Edges:      patch.Edges,
+		Flomorphic:  &Header{Kind: "workflow", Version: Version, ExportedAt: time.Now().UTC().Format(time.RFC3339)},
+		Title:       title,
+		Tags:        rec.Tags,
+		Preferences: rec.Preferences,
+		Plugins:     pluginManifest(ctx, store, rec.ViewFlow),
+		Nodes:       patch.Nodes,
+		Edges:       patch.Edges,
 	}
 }
 

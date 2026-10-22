@@ -283,6 +283,7 @@ func (s *store) Close() error {
 func applyMigrations(ctx context.Context, db *sql.DB) error {
 	migrations := []string{
 		`ALTER TABLE workflows ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE workflows ADD COLUMN IF NOT EXISTS preferences TEXT NOT NULL DEFAULT '{}'`,
 	}
 	for _, stmt := range migrations {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

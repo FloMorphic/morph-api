@@ -102,6 +102,9 @@ func HandleContinueAfter(store repository.Store, header nats.Header, data []byte
 		// parked run's traversal state so a join past this node does not lock.
 		// Resume Fill in updateDocContext message
 		Resume: nil,
+		// A Continue After resumes a run that is already under way: its context
+		// carries the entry values the first launch seeded.
+		EntrySkip: true,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("continue.at: schedule resume: %w", err)

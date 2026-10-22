@@ -16,16 +16,22 @@ import (
 // normalized on the way in (see NormalizeTags) and filtered server-side by
 // GET /flow?tags=.
 //
+// `Preferences` are the flow-level, non-graph choices — today its entry form,
+// the input a flow asks for before it runs (see FlowPreferences).
+//
 // On an upsert, a nil Tags means "leave the stored tags alone" and an empty
 // non-nil slice means "clear them" — so a client that knows nothing about tags
 // (an MCP patch, an older build) cannot silently strip the labels a package
 // stamped on the flow. `json:"tags,omitempty"` keeps that distinction on the
-// wire in both directions.
+// wire in both directions, and nil Preferences carries the same meaning.
 type FlowRecord struct {
-	ID        string               `json:"id"`
-	Title     string               `json:"title"`
-	Tags      []string             `json:"tags,omitempty"`
-	CreatedAt int64                `json:"createdAt"`
-	UpdatedAt int64                `json:"updatedAt"`
-	ViewFlow  inflowModels.VueFlow `json:"view_flow"`
+	ID    string   `json:"id"`
+	Title string   `json:"title"`
+	Tags  []string `json:"tags,omitempty"`
+	// Preferences is nil when a save says nothing about them (keep what is
+	// stored); a non-nil value with no entry clears them.
+	Preferences *FlowPreferences     `json:"preferences,omitempty"`
+	CreatedAt   int64                `json:"createdAt"`
+	UpdatedAt   int64                `json:"updatedAt"`
+	ViewFlow    inflowModels.VueFlow `json:"view_flow"`
 }

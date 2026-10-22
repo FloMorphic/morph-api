@@ -7,6 +7,7 @@ import (
 	"github.com/FloMorphic/morph-api/api/wslog"
 	"github.com/FloMorphic/morph-api/etc"
 	"github.com/FloMorphic/morph-api/flowfile"
+	"github.com/FloMorphic/morph-api/models"
 	"github.com/gofiber/fiber/v3"
 )
 
@@ -30,6 +31,9 @@ type importInput struct {
 	// picker on the far side can narrow to that framework. Absent keeps the
 	// document's tags; `[]` imports the flow with none.
 	Tags []string `json:"tags"`
+	// Overrides the document's own preferences (its entry form) when present.
+	// Absent keeps the document's; `{}` imports the flow without one.
+	Preferences *models.FlowPreferences `json:"preferences"`
 	// Plan and report without saving.
 	DryRun bool `json:"dryRun"`
 	// The export document itself.
@@ -49,7 +53,7 @@ func (ctl *controller) importFlow(c fiber.Ctx) error {
 	if err != nil {
 		return etc.Fail(c, fiber.StatusBadRequest, err.Error())
 	}
-	res, err := flowfile.Import(c.Context(), ctl.store, flowfile.Input{Doc: doc, ID: in.ID, Title: in.Title, Tags: in.Tags, DryRun: in.DryRun})
+	res, err := flowfile.Import(c.Context(), ctl.store, flowfile.Input{Doc: doc, ID: in.ID, Title: in.Title, Tags: in.Tags, Preferences: in.Preferences, DryRun: in.DryRun})
 	if err != nil {
 		if errors.Is(err, flowfile.ErrInvalid) {
 			return etc.Fail(c, fiber.StatusBadRequest, err.Error())

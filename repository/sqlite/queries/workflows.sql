@@ -22,12 +22,13 @@ WHERE (@search = '' OR title LIKE '%' || @search || '%')
         WHERE instr(@tags, ',' || tag.value || ',') > 0));
 
 -- name: UpsertWorkflow :exec
-INSERT INTO workflows (id, title, view_flow, tags, created_at, updated_at)
-VALUES (@id, @title, @view_flow, @tags, @created_at, @updated_at)
+INSERT INTO workflows (id, title, view_flow, tags, preferences, created_at, updated_at)
+VALUES (@id, @title, @view_flow, @tags, @preferences, @created_at, @updated_at)
 ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
     view_flow = excluded.view_flow,
     tags = excluded.tags,
+    preferences = excluded.preferences,
     updated_at = excluded.updated_at;
 
 -- name: DeleteWorkflow :execrows

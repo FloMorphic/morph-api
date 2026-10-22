@@ -155,6 +155,14 @@ func (s *Scheduler) launch(ctx context.Context, rec *models.Process) error {
 		return fmt.Errorf("claim row: %w", err)
 	}
 
+	// Seed the flow's entry values now, not when the row was booked: the context
+	// should hold this run's input as it starts, and a long-scheduled row would
+	// otherwise have written it hours ago, over whatever happened since. The
+	// values were kept on the row for exactly this moment (MetaEntryKey).
+	if err := seedScheduledEntry(ctx, s.store, rec); err != nil {
+		return err
+	}
+
 	// Carry the scheduled request's meta forward (it holds the indexId echo and
 	// any backend-injected tags from schedule time).
 	reqMeta := map[string]string{}

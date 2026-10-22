@@ -54,11 +54,12 @@ func registerProcessTools(s *server.MCPServer, store repository.Store) {
 	})
 
 	s.AddTool(mcp.NewTool("flo_start_process",
-		mcp.WithDescription("Launch a workflow run on the inflow engine (or record it as scheduled when scheduledAt is a future epoch-millis). Requires the inflow runtime to be connected."),
+		mcp.WithDescription("Launch a workflow run on the inflow engine (or record it as scheduled when scheduledAt is a future epoch-millis). Requires the inflow runtime to be connected.\n\nIf the flow declares an ENTRY FORM (the input it asks for before it runs), read it with flo_get_flow_entry first and pass the filled values as `entry`: they are validated against the flow's own schema and seeded into the one context location the entry names, leaving the rest of the context document untouched. A flow whose entry is `required` refuses to launch without them."),
 		mcp.WithString("flowId", mcp.Required(), mcp.Description("workflow id to run")),
 		mcp.WithString("contextId", mcp.Required(), mcp.Description("context document the run reads/writes")),
 		mcp.WithString("startNodeId", mcp.Description("pin the entry node; empty runs the flow's own start node")),
 		mcp.WithObject("meta", mcp.Description("optional backend-only record meta kept on the row")),
+		mcp.WithObject("entry", mcp.Description("values for the flow's entry form (see flo_get_flow_entry); omit for a flow that declares none")),
 		mcp.WithNumber("scheduledAt", mcp.Description("epoch millis to launch at; omit/0 runs immediately")),
 		mcp.WithNumber("executeTimeoutSec", mcp.Description("override: whole-run timeout (seconds)")),
 		mcp.WithNumber("processNodeLimit", mcp.Description("override: max node visits (runaway-loop guard)")),
@@ -77,11 +78,16 @@ func registerProcessTools(s *server.MCPServer, store repository.Store) {
 		if err != nil {
 			return mcp.NewToolResultErrorFromErr("invalid meta", err), nil
 		}
+		entry, err := argObject(req, "entry")
+		if err != nil {
+			return mcp.NewToolResultErrorFromErr("invalid entry", err), nil
+		}
 		rec, err := inflow.StartWorkflow(ctx, store, inflow.StartParams{
 			FlowID:       flowID,
 			ContextID:    contextID,
 			StartNodeIDs: []string{req.GetString("startNodeId", "")},
 			RecordMeta:   meta,
+			Entry:        entry,
 			ScheduledAt:  int64(req.GetInt("scheduledAt", 0)),
 			Settings: inflow.RunSettings{
 				ExecuteTimeoutSec: int64(req.GetInt("executeTimeoutSec", 0)),

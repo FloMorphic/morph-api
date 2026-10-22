@@ -25,6 +25,12 @@ type startInput struct {
 	// resumes, which the backend builds itself (see inflow.StartParams).
 	StartNodeID string         `json:"startNodeId"`
 	Meta        map[string]any `json:"meta"`
+	// Entry are the values filled into the flow's entry form (the input a flow
+	// declares it needs — see GET /flow/id/:id/entry). They are validated
+	// against the flow's own schema and seeded into the one context location
+	// the entry's target names before the run is dispatched. Omit for a flow
+	// that declares no entry, or to run on what the context already holds.
+	Entry       map[string]any `json:"entry"`
 	ScheduledAt int64          `json:"scheduledAt"`
 	// Settings overrides the engine run settings (see runSettingsInput). Omitted
 	// or zero fields keep the engine defaults, so the frontend can send only what
@@ -72,6 +78,7 @@ func (ctl *controller) start(c fiber.Ctx) error {
 		ContextID:    in.ContextID,
 		StartNodeIDs: []string{in.StartNodeID},
 		RecordMeta:   in.Meta,
+		Entry:        in.Entry,
 		ScheduledAt:  in.ScheduledAt,
 		Settings:     settings,
 		// ReqMeta is intentionally not taken from the request body — the backend

@@ -159,10 +159,11 @@ type Trigger struct {
 }
 
 type Workflow struct {
-	ID        string
-	Title     string
-	ViewFlow  string
-	Tags      string
-	CreatedAt int64
-	UpdatedAt int64
+	ID          string
+	Title       string
+	ViewFlow    string
+	Tags        string
+	Preferences string
+	CreatedAt   int64
+	UpdatedAt   int64
 }

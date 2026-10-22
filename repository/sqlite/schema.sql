@@ -16,6 +16,11 @@ CREATE TABLE IF NOT EXISTS workflows (
     -- and only ever queried as "does this row carry one of these", which
     -- json_each answers without a second table to keep in step.
     tags       TEXT    NOT NULL DEFAULT '[]',
+    -- Flow-level, non-graph choices as a JSON object — today the entry form a
+    -- flow asks to have filled in before it runs (models.FlowPreferences). It
+    -- rides with the row rather than in a side table: it is read whole with the
+    -- flow, always, and never queried by its contents.
+    preferences TEXT   NOT NULL DEFAULT '{}',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );

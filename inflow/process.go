@@ -84,6 +84,18 @@ type StartParams struct {
 	// the next-node list handed back when a run parks (human-in-the-loop), which
 	// a resume run is entered on. Never sent to the engine.
 	RecordMeta map[string]any
+	// Entry are the values submitted for the flow's entry form (see entry.go):
+	// the input a flow declares it needs, which is validated against the flow's
+	// own JSON Schema and seeded into the ONE context location the entry's
+	// target names before the run is dispatched. nil is "nothing submitted",
+	// which is fine for a flow that declares no entry (or whose entry is not
+	// required and whose defaults are enough).
+	Entry map[string]any
+	// EntrySkip suppresses entry handling for this launch — what a continuation
+	// passes (a HITL resume, a Continue After): its context was seeded when the
+	// run first started, the mid-flight branches are reading it, and re-seeding
+	// would rewrite data under them.
+	EntrySkip bool
 	// ScheduledAt, when non-zero (epoch millis), records the run as `scheduled`
 	// and does NOT dispatch it — a scheduler launches it when the time is reached.
 	ScheduledAt int64
@@ -137,18 +149,62 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 		return nil, fmt.Errorf("contextId is required")
 	}
 
-	// Resolve the start node from the flow when the caller did not pin any.
+	// The flow is read for two things — the start node when the caller pinned
+	// none, and the entry form it may declare — so load it once when either is
+	// in play, and not at all for a continuation that pinned its nodes (a HITL
+	// resume dispatches on a hot path and needs nothing from the record).
 	startNodeIDs := nonEmpty(params.StartNodeIDs)
-	if len(startNodeIDs) == 0 {
+	var flow *models.FlowRecord
+	if len(startNodeIDs) == 0 || !params.EntrySkip {
 		rec, err := store.Workflows().GetByID(ctx, params.FlowID)
 		if err != nil {
 			return nil, fmt.Errorf("load flow %s: %w", params.FlowID, err)
 		}
-		startNodeID, err := GetStartNodeId(*rec)
+		flow = rec
+	}
+	if len(startNodeIDs) == 0 {
+		startNodeID, err := GetStartNodeId(*flow)
 		if err != nil {
 			return nil, err
 		}
 		startNodeIDs = []string{startNodeID}
+	}
+
+	// The flow's entry form: validate what was submitted against the flow's own
+	// schema BEFORE a row exists, so a launch that does not satisfy the flow's
+	// input contract is refused outright rather than recorded as a failed run.
+	var entry *models.EntryForm
+	var entryValues map[string]any
+	if flow != nil && !params.EntrySkip {
+		entry = EntryOf(*flow)
+	}
+	if entry != nil {
+		// What the context already holds at the target is half the decision: it
+		// satisfies a required entry (a re-run over a context a previous run —
+		// or a person editing it — already filled) and it is never overwritten
+		// by defaults, because the data sitting there is someone's real input.
+		held, _ := entryValuesInContext(ctx, store, params.ContextID, entry.TargetPath())
+		switch {
+		case len(params.Entry) > 0:
+			// Something was submitted: check it against the flow's own schema.
+			vals, err := PrepareEntryValues(entry, params.Entry)
+			if err != nil {
+				return nil, err
+			}
+			entryValues = vals
+		case len(held) > 0:
+			// The target already holds input — leave it exactly as it is.
+		case entry.Required:
+			return nil, fmt.Errorf("flow %s requires its entry form to be filled in before it runs", params.FlowID)
+		default:
+			// An unattended launch of an OPTIONAL entry (a trigger, a schedule,
+			// an agent that supplies nothing) seeds the document's defaults and
+			// nothing more, unvalidated: the author said this flow may run
+			// without input, so a field the schema would require is the graph's
+			// to guard — refusing the run here would make `required: false`
+			// mean nothing.
+			entryValues = EntryDefaults(entry)
+		}
 	}
 
 	// The row's column holds one node; the full set travels on the record meta so
@@ -162,6 +218,13 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 	// built request) still resumes; only when set, to keep the meta clean.
 	if params.Resume != nil {
 		recordMeta[MetaResumeKey] = true
+	}
+	// Keep the entry values on the row: a scheduled launch is dispatched later
+	// by the scheduler and seeds them then (the context should hold the run's
+	// input when the run starts, not hours earlier), and for an immediate run
+	// they record what this run was actually given once the context has moved on.
+	if len(entryValues) > 0 {
+		recordMeta[MetaEntryKey] = entryValues
 	}
 
 	// Create the row first so the auto-increment index_id is assigned; it is the
@@ -182,6 +245,19 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 	}
 	if err := store.Processes().Create(ctx, rec); err != nil {
 		return nil, fmt.Errorf("record process: %w", err)
+	}
+
+	// Seed the entry values into the context the run is about to read. A
+	// scheduled row is seeded by the scheduler at fire time instead, so the
+	// values land as the run starts rather than when it was booked.
+	if params.ScheduledAt == 0 && len(entryValues) > 0 {
+		if err := SeedEntry(ctx, store, entry, params.ContextID, entryValues); err != nil {
+			rec.Status = models.ProcessFailed
+			rec.Error = err.Error()
+			rec.FinishedAt = nowMillis()
+			_ = store.Processes().Update(ctx, rec)
+			return rec, err
+		}
 	}
 
 	// Echo the assigned index into the request meta, then build the request.
