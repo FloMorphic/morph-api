@@ -128,6 +128,11 @@ type Input struct {
 	DryRun bool
 }
 
+// bindPluginManual is the `data.bindPlugin` value that keeps a plugin node out
+// of the action-only match, so it lands unbound for the operator to bind on the
+// canvas. See stampIdentities.
+const bindPluginManual = "manual"
+
 // MissingAction is one plugin action the document calls that no local plugin
 // provides, with what the document knows about where to get it and the refs of
 // the nodes calling it.
@@ -422,6 +427,15 @@ func pluginManifest(ctx context.Context, store repository.Store, graph compiler.
 // Any identity the document carried is cleared first: a foreign pluginId
 // compiles into a NATS subject nothing answers on. The returned list is the
 // plugin actions no local plugin provides, each with the refs of its callers.
+//
+// `data.bindPlugin: "manual"` opts a node out of the action-only fallback: it
+// lands unbound and flagged, so the canvas badges it and its drawer offers a
+// pick of the installed plugins that serve the action. An installer that knows
+// several local plugins serve one action — SurfStat, where every channel is its
+// own plugin — sets it rather than let this function guess which one a flow
+// meant; binding the first that answers would look settled and be wrong. An
+// exact (pluginId, action) pair still binds, which is what the drawer writes
+// when the operator picks, and clears the marker.
 func stampIdentities(ctx context.Context, store repository.Store, nodes []designer.PatchNode, manifest []PluginManifestEntry) ([]MissingAction, error) {
 	exts, _, err := store.Extensions().List(ctx, repository.ListParams{Kind: string(models.KindExtension), Limit: 500})
 	if err != nil {
@@ -473,6 +487,7 @@ func stampIdentities(ctx context.Context, store repository.Store, nodes []design
 		if n.Kind == "plugin" {
 			action := strings.TrimSpace(asString(data["action"]))
 			hint := strings.TrimSpace(asString(data["pluginId"]))
+			manual := strings.TrimSpace(asString(data["bindPlugin"])) == bindPluginManual
 			delete(data, "extensionId")
 			delete(data, "pluginId")
 			delete(data, "form")
@@ -482,10 +497,14 @@ func stampIdentities(ctx context.Context, store repository.Store, nodes []design
 				continue
 			}
 			row := byPluginAction[hint+"\x00"+action]
-			if row == nil {
+			if row == nil && !manual {
 				row = byAction[action]
 			}
 			if row != nil {
+				// Bound by the exact pair the document carried, so the opt-out
+				// has served its purpose and must not survive to unbind the
+				// node on the next import.
+				delete(data, "bindPlugin")
 				data["extensionId"] = row.ID
 				data["pluginId"] = row.PluginID
 				data["action"] = row.Action
@@ -503,6 +522,13 @@ func stampIdentities(ctx context.Context, store repository.Store, nodes []design
 			entry := manifestFor(manifest, action)
 			data["missingPlugin"] = map[string]any{
 				"name": entry.Name, "repo": entry.Repo, "ref": entry.Ref, "subdir": entry.Subdir,
+			}
+			if manual {
+				// Not missing — withheld. The marker stays so a re-install
+				// leaves it for the canvas again, and it is kept out of
+				// MissingActions, which means "install this plugin".
+				data["bindPlugin"] = bindPluginManual
+				continue
 			}
 			m := missingByAction[action]
 			if m == nil {
