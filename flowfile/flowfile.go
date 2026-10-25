@@ -145,15 +145,42 @@ type MissingAction struct {
 	Nodes  []string `json:"nodes"`
 }
 
+// UnboundNode is one plugin node the import kept but did not bind, because
+// binding it would have been a guess: several registered plugins serve its
+// action and the document named none of them in particular.
+//
+// This is NOT a missing plugin — the action is served here, more than once over
+// — so it is reported apart from MissingActions, whose message is "install this
+// plugin". The node is flagged instead, and the pick is made in its drawer on
+// the canvas, where the plugins that can serve it are offered.
+type UnboundNode struct {
+	Ref    string `json:"ref"`
+	Title  string `json:"title,omitempty"`
+	Action string `json:"action"`
+	// Plugin is what the document's own plugin manifest called the plugin it was
+	// served from — never one of this install's ids.
+	Plugin string `json:"plugin,omitempty"`
+	// Choices are the registered plugins that serve this action here, by name:
+	// what the drawer will offer, and the reason the node was left alone.
+	Choices []string `json:"choices"`
+	// Withheld marks a node the DOCUMENT asked to leave unbound
+	// (`bindPlugin: "manual"`), as opposed to one this install held back because
+	// it found the action ambiguous. Both land the same way; an installer that
+	// asked for it does not need to be told it got it.
+	Withheld bool `json:"withheld,omitempty"`
+}
+
 // Result is what an import produced. Flow is the record as saved (or as it
 // would be saved on a dry run). Problems are the designer's planning findings;
-// MissingActions the plugin actions this install cannot serve. The compile pass
+// MissingActions the plugin actions this install cannot serve, UnboundNodes the
+// nodes it can serve several ways and would not choose between. The compile pass
 // is a check, not a gate — see Import — so CompileError is reported, and on
 // success StartNodeID / Compiled carry the lowered engine graph.
 type Result struct {
 	Flow           models.FlowRecord             `json:"flow"`
 	Problems       []designer.Problem            `json:"problems"`
 	MissingActions []MissingAction               `json:"missingActions"`
+	UnboundNodes   []UnboundNode                 `json:"unboundNodes"`
 	CompileError   string                        `json:"compileError,omitempty"`
 	StartNodeID    string                        `json:"startNodeId,omitempty"`
 	Compiled       map[string]*inflowModels.Node `json:"compiled,omitempty"`
@@ -187,9 +214,12 @@ func Import(ctx context.Context, store repository.Store, in Input) (*Result, err
 	// Stamp on copies: the caller's document is left as it was.
 	nodes := make([]designer.PatchNode, len(doc.Nodes))
 	copy(nodes, doc.Nodes)
-	missing, err := stampIdentities(ctx, store, nodes, doc.Plugins)
+	missing, unbound, err := stampIdentities(ctx, store, nodes, doc.Plugins)
 	if err != nil {
 		return nil, err
+	}
+	if unbound == nil {
+		unbound = []UnboundNode{}
 	}
 
 	graph, problems := designer.PlanPatch(designer.Patch{Nodes: nodes, Edges: doc.Edges, Notes: doc.Notes}, nil)
@@ -222,7 +252,7 @@ func Import(ctx context.Context, store repository.Store, in Input) (*Result, err
 	rec := models.FlowRecord{ID: strings.TrimSpace(in.ID), Title: title, Tags: tags, Preferences: prefs.Normalize(), ViewFlow: graph}
 	inflow.NormalizeGraph(&rec)
 
-	res := &Result{Problems: problems, MissingActions: missing, DryRun: in.DryRun}
+	res := &Result{Problems: problems, MissingActions: missing, UnboundNodes: unbound, DryRun: in.DryRun}
 	if startID, compiled, err := inflow.FLowCompiler(rec); err != nil {
 		res.CompileError = err.Error()
 	} else {
@@ -428,32 +458,62 @@ func pluginManifest(ctx context.Context, store repository.Store, graph compiler.
 // compiles into a NATS subject nothing answers on. The returned list is the
 // plugin actions no local plugin provides, each with the refs of its callers.
 //
-// `data.bindPlugin: "manual"` opts a node out of the action-only fallback: it
-// lands unbound and flagged, so the canvas badges it and its drawer offers a
-// pick of the installed plugins that serve the action. An installer that knows
-// several local plugins serve one action — SurfStat, where every channel is its
-// own plugin — sets it rather than let this function guess which one a flow
-// meant; binding the first that answers would look settled and be wrong. An
+// An action SEVERAL registered plugins serve is not resolved at all. The
+// document names the action, not the plugin — a pluginId is a per-install
+// address — so with two plugins answering `mssql.query` there is nothing in the
+// file that says which one the flow meant, and binding the first found would
+// look settled and be wrong: the flow runs, against the other database. The
+// node is kept, left unbound, and returned in UnboundNodes for the caller to
+// report; the pick is made in its drawer on the canvas.
+//
+// Deciding it here is what keeps it from being decided four times. Every
+// installer that lands flows on a FloMorphic — the editor's own Import dialog,
+// SurfStat's framework packages, Venapce's operation packages, whatever comes
+// next — would otherwise have to detect the ambiguity itself and mark the node,
+// and each one that forgot would quietly bind the wrong plugin.
+//
+// `data.bindPlugin: "manual"` is how an installer asks for this explicitly,
+// even where only one plugin serves the action (SurfStat does, for a package
+// plugin the operator should confirm against a channel). It is also what this
+// function stamps on a node it holds back, as its own note that the node is
+// unbound on purpose: the drawer reads it to offer the pick rather than say
+// nothing provides the action. An exact (pluginId, action) pair still binds —
+// that IS the drawer's pick — and clears the marker. An
 // exact (pluginId, action) pair still binds, which is what the drawer writes
 // when the operator picks, and clears the marker.
-func stampIdentities(ctx context.Context, store repository.Store, nodes []designer.PatchNode, manifest []PluginManifestEntry) ([]MissingAction, error) {
+func stampIdentities(ctx context.Context, store repository.Store, nodes []designer.PatchNode, manifest []PluginManifestEntry) ([]MissingAction, []UnboundNode, error) {
 	exts, _, err := store.Extensions().List(ctx, repository.ListParams{Kind: string(models.KindExtension), Limit: 500})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	builtins, _, err := store.Extensions().List(ctx, repository.ListParams{Kind: string(models.KindBuiltin), Limit: 200})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	byAction := map[string]*models.ExtensionRecord{}
+	// Every plugin that serves an action, not just the first: one candidate is a
+	// binding, several are a question. Distinct by pluginId — two registrations
+	// of one plugin are two plugins here, and are exactly the pair a guess gets
+	// wrong — while a re-sync that left a duplicate row for one plugin is still
+	// one candidate.
+	byAction := map[string][]*models.ExtensionRecord{}
 	byPluginAction := map[string]*models.ExtensionRecord{}
+	// A plugin's own name lives on its registration row (the one with no
+	// action); the action rows are named after the method. It is what the
+	// operator is choosing between, so it is what UnboundNodes offers.
+	pluginNames := map[string]string{}
 	for i := range exts {
 		row := &exts[i]
-		if row.Action == "" || row.PluginID == "" {
+		if row.PluginID == "" {
 			continue
 		}
-		if _, dup := byAction[row.Action]; !dup {
-			byAction[row.Action] = row
+		if row.Action == "" {
+			if n := strings.TrimSpace(row.Name); n != "" {
+				pluginNames[row.PluginID] = n
+			}
+			continue
+		}
+		if _, dup := byPluginAction[row.PluginID+"\x00"+row.Action]; !dup {
+			byAction[row.Action] = append(byAction[row.Action], row)
 		}
 		byPluginAction[row.PluginID+"\x00"+row.Action] = row
 	}
@@ -467,6 +527,7 @@ func stampIdentities(ctx context.Context, store repository.Store, nodes []design
 
 	missingByAction := map[string]*MissingAction{}
 	var order []string
+	var unbound []UnboundNode
 	for i := range nodes {
 		n := &nodes[i]
 		// Copy the data map: the caller's document must not see the stamps.
@@ -496,9 +557,13 @@ func stampIdentities(ctx context.Context, store repository.Store, nodes []design
 			if action == "" {
 				continue
 			}
+			cands := byAction[action]
 			row := byPluginAction[hint+"\x00"+action]
-			if row == nil && !manual {
-				row = byAction[action]
+			// One candidate and nothing asking otherwise: bind it. Several is a
+			// question this function does not answer (see above), and none is a
+			// plugin to install.
+			if row == nil && !manual && len(cands) == 1 {
+				row = cands[0]
 			}
 			if row != nil {
 				// Bound by the exact pair the document carried, so the opt-out
@@ -517,26 +582,41 @@ func stampIdentities(ctx context.Context, store repository.Store, nodes []design
 				}
 				continue
 			}
-			// Unresolved: keep the node, mark it the way the canvas expects, and
-			// report the action once with the nodes that call it.
+			// Unresolved, for one of two quite different reasons.
 			entry := manifestFor(manifest, action)
-			data["missingPlugin"] = map[string]any{
-				"name": entry.Name, "repo": entry.Repo, "ref": entry.Ref, "subdir": entry.Subdir,
-			}
-			if manual {
-				// Not missing — withheld. The marker stays so a re-install
-				// leaves it for the canvas again, and it is kept out of
-				// MissingActions, which means "install this plugin".
-				data["bindPlugin"] = bindPluginManual
+			if len(cands) == 0 {
+				// Nothing here serves the action: a plugin to install, and the
+				// marker the canvas expects for it. Any withhold the document
+				// carried goes with it — "pick one of the plugins that serve
+				// this" is not a question while none does, and installing the
+				// plugin should then bind the node rather than leave it asking.
+				delete(data, "bindPlugin")
+				data["missingPlugin"] = map[string]any{
+					"name": entry.Name, "repo": entry.Repo, "ref": entry.Ref, "subdir": entry.Subdir,
+				}
+				m := missingByAction[action]
+				if m == nil {
+					m = &MissingAction{Action: action, Plugin: entry.Name, Repo: entry.Repo, Ref: entry.Ref, Subdir: entry.Subdir}
+					missingByAction[action] = m
+					order = append(order, action)
+				}
+				m.Nodes = append(m.Nodes, label)
 				continue
 			}
-			m := missingByAction[action]
-			if m == nil {
-				m = &MissingAction{Action: action, Plugin: entry.Name, Repo: entry.Repo, Ref: entry.Ref, Subdir: entry.Subdir}
-				missingByAction[action] = m
-				order = append(order, action)
+			// Served here, and left alone on purpose: several plugins answer, or
+			// the document asked for the pick to be made here. The marker is
+			// this install's note that the node is unbound deliberately — the
+			// drawer reads it to offer the plugins below instead of reporting a
+			// plugin that is not missing. No missingPlugin: nothing is.
+			data["bindPlugin"] = bindPluginManual
+			ref := strings.TrimSpace(n.Ref)
+			if ref == "" {
+				ref = label
 			}
-			m.Nodes = append(m.Nodes, label)
+			unbound = append(unbound, UnboundNode{
+				Ref: ref, Title: strings.TrimSpace(n.Title), Action: action,
+				Plugin: entry.Name, Choices: pluginChoices(cands, pluginNames), Withheld: manual,
+			})
 			continue
 		}
 		if row := byType[n.Kind]; row != nil {
@@ -550,7 +630,28 @@ func stampIdentities(ctx context.Context, store repository.Store, nodes []design
 	for _, a := range order {
 		out = append(out, *missingByAction[a])
 	}
-	return out, nil
+	return out, unbound, nil
+}
+
+// pluginChoices names the plugins behind a set of action rows, as the operator
+// will see them: the registration row's name, falling back to the plugin id
+// when a registration is somehow missing, so a choice is never offered blank.
+func pluginChoices(rows []*models.ExtensionRecord, names map[string]string) []string {
+	out := make([]string, 0, len(rows))
+	seen := map[string]bool{}
+	for _, r := range rows {
+		name := names[r.PluginID]
+		if name == "" {
+			name = r.PluginID
+		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // outboundRows is a row's declared ports as the generic rows the planner's

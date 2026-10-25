@@ -218,3 +218,157 @@ func TestExportRoundTrip(t *testing.T) {
 		t.Fatalf("re-import: %d nodes %d edges missing=%v", len(again.Flow.ViewFlow.Nodes), len(again.Flow.ViewFlow.Edges), again.MissingActions)
 	}
 }
+
+// addPlugin registers a second plugin serving one action, so an action has two
+// candidates on this install — the state an import must not resolve by guessing.
+func addPlugin(t *testing.T, store repository.Store, name, pluginID, action string) {
+	t.Helper()
+	ctx := context.Background()
+	reg := models.ExtensionRecord{Kind: models.KindExtension, Type: "plugin", Name: name, PluginID: pluginID}
+	if err := store.Extensions().Upsert(ctx, &reg); err != nil {
+		t.Fatal(err)
+	}
+	row := models.ExtensionRecord{Kind: models.KindExtension, Type: "plugin", Name: "Run " + action,
+		Action: action, PluginID: pluginID, ParentID: reg.ID,
+		Parameters: models.FormParameters{Schema: map[string]any{"type": "object"}}}
+	if err := store.Extensions().Upsert(ctx, &row); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Two plugins serving one action: the document names the action, not the
+// plugin, so there is nothing in it that says which one the flow meant. Binding
+// the first found would look settled and talk to the wrong plugin, so the node
+// is kept, left unbound, and reported for the caller to surface.
+func TestImportWillNotGuessBetweenTwoPlugins(t *testing.T) {
+	store := openStore(t)
+	addPlugin(t, store, "venapce-mirror", "venapce-5678", "osquery.query")
+
+	doc, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Import(context.Background(), store, Input{Doc: doc})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	// An action served twice is not a missing plugin — nothing is missing.
+	if len(res.MissingActions) != 0 {
+		t.Fatalf("unexpected missing actions: %+v", res.MissingActions)
+	}
+	if len(res.UnboundNodes) != 1 {
+		t.Fatalf("got %d unbound nodes, want 1 (the osquery node): %+v", len(res.UnboundNodes), res.UnboundNodes)
+	}
+	u := res.UnboundNodes[0]
+	if u.Ref != "probe" || u.Action != "osquery.query" || u.Withheld {
+		t.Fatalf("unbound node does not address the ambiguous node: %+v", u)
+	}
+	if len(u.Choices) != 2 || u.Choices[0] != "venapce" || u.Choices[1] != "venapce-mirror" {
+		t.Fatalf("choices = %v, want both plugins by registered name, sorted", u.Choices)
+	}
+
+	for _, n := range res.Flow.ViewFlow.Nodes {
+		if n.Type != "plugin" {
+			continue
+		}
+		d := n.Data.(map[string]any)
+		switch d["action"] {
+		case "osquery.query":
+			if _, ok := d["pluginId"]; ok {
+				t.Errorf("an ambiguous node was bound anyway: %v", d)
+			}
+			if d["bindPlugin"] != bindPluginManual {
+				t.Errorf("the held-back node carries no marker, so its drawer cannot offer the pick: %v", d)
+			}
+			if _, ok := d["missingPlugin"]; ok {
+				t.Errorf("an ambiguous node must not read as a missing plugin: %v", d)
+			}
+		case "db.stages.upsert":
+			// One candidate is not a choice: it binds as it always did.
+			if d["pluginId"] != "venapce-1234" {
+				t.Errorf("an unambiguous node was not bound: %v", d)
+			}
+			if _, ok := d["bindPlugin"]; ok {
+				t.Errorf("a bound node kept the marker: %v", d)
+			}
+		}
+	}
+}
+
+// The drawer's pick is an exact (pluginId, action) pair. It must win over the
+// ambiguity — that is the whole point of making it — and clear the marker, so
+// the node does not unbind itself on the next import.
+func TestExactPairBindsThroughTheAmbiguity(t *testing.T) {
+	store := openStore(t)
+	addPlugin(t, store, "venapce-mirror", "venapce-5678", "osquery.query")
+
+	picked := strings.Replace(sample,
+		`"data": {"action": "osquery.query", "body": {"sql": "select 1"}}`,
+		`"data": {"action": "osquery.query", "pluginId": "venapce-5678", "bindPlugin": "manual", "body": {"sql": "select 1"}}`, 1)
+	doc, err := Parse([]byte(picked))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Import(context.Background(), store, Input{Doc: doc})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if len(res.UnboundNodes) != 0 {
+		t.Fatalf("a node naming its plugin exactly was still held back: %+v", res.UnboundNodes)
+	}
+	for _, n := range res.Flow.ViewFlow.Nodes {
+		if n.Type != "plugin" {
+			continue
+		}
+		d := n.Data.(map[string]any)
+		if d["action"] != "osquery.query" {
+			continue
+		}
+		if d["pluginId"] != "venapce-5678" {
+			t.Fatalf("the picked plugin was not honoured: %v", d)
+		}
+		if _, ok := d["bindPlugin"]; ok {
+			t.Fatalf("the marker survived a binding and would unbind this node next time: %v", d)
+		}
+	}
+}
+
+// A withhold is a choice between plugins, so it means nothing where there are
+// none: the node is a missing plugin, reported as one, and the marker goes —
+// installing the plugin should then bind it rather than leave it asking a
+// question that no longer exists.
+func TestWithheldNodeWithNoPluginIsReportedMissing(t *testing.T) {
+	store, _ := repository.Open("sqlite", ":memory:")
+	withheld := strings.Replace(sample,
+		`"data": {"action": "osquery.query", "body": {"sql": "select 1"}}`,
+		`"data": {"action": "osquery.query", "bindPlugin": "manual", "body": {"sql": "select 1"}}`, 1)
+	doc, err := Parse([]byte(withheld))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Import(context.Background(), store, Input{Doc: doc, DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.UnboundNodes) != 0 {
+		t.Fatalf("nothing serves these actions, so there is no choice to report: %+v", res.UnboundNodes)
+	}
+	var found bool
+	for _, m := range res.MissingActions {
+		if m.Action == "osquery.query" && len(m.Nodes) == 1 && m.Nodes[0] == "probe" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the withheld node was hidden from missingActions: %+v", res.MissingActions)
+	}
+	for _, n := range res.Flow.ViewFlow.Nodes {
+		if n.Type != "plugin" {
+			continue
+		}
+		d := n.Data.(map[string]any)
+		if _, ok := d["bindPlugin"]; ok {
+			t.Errorf("the marker survived onto a node nothing here provides: %v", d)
+		}
+	}
+}

@@ -105,7 +105,7 @@ func registerDesignerTools(s *server.MCPServer, store repository.Store) {
 		}
 		out := map[string]any{
 			"ok": res.CompileError == "", "problems": res.Problems, "missingActions": res.MissingActions,
-			"graph": res.Flow.ViewFlow,
+			"unboundNodes": res.UnboundNodes, "graph": res.Flow.ViewFlow,
 		}
 		if res.CompileError != "" {
 			out["error"] = res.CompileError
@@ -136,7 +136,8 @@ func registerDesignerTools(s *server.MCPServer, store repository.Store) {
 			return bad, nil
 		}
 		return jsonResult(map[string]any{
-			"flow": res.Flow, "problems": res.Problems, "missingActions": res.MissingActions, "compileError": res.CompileError,
+			"flow": res.Flow, "problems": res.Problems, "missingActions": res.MissingActions,
+			"unboundNodes": res.UnboundNodes, "compileError": res.CompileError,
 		})
 	})
 }

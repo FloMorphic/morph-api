@@ -30,6 +30,13 @@ var installLocalKeys = map[string]bool{
 	// The import-time "no local plugin provides this action" marker is a
 	// property of the install that read the file, not of the flow.
 	"missingPlugin": true,
+	// So is the withheld-choice marker: it says "several plugins HERE serve this
+	// action", which is a fact about one install's extension table. Exported, it
+	// would travel into a package and hold the node back on an install where
+	// there is no choice to make — unbound, and silent, because that install
+	// never decided anything. The installer that needs it sets it per target
+	// (SurfStat's channel mapping, Venapce's ambiguity check).
+	"bindPlugin": true,
 }
 
 var refSlugRe = regexp.MustCompile(`[^a-z0-9]+`)

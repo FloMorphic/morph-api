@@ -147,6 +147,7 @@ func registerWorkflowTools(s *server.MCPServer, store repository.Store) {
 			"flow":           res.Flow,
 			"problems":       res.Problems,
 			"missingActions": res.MissingActions,
+			"unboundNodes":   res.UnboundNodes,
 			"compileError":   res.CompileError,
 			"dryRun":         res.DryRun,
 		})

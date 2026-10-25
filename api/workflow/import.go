@@ -68,6 +68,7 @@ func (ctl *controller) importFlow(c fiber.Ctx) error {
 		"flow":           res.Flow,
 		"problems":       res.Problems,
 		"missingActions": res.MissingActions,
+		"unboundNodes":   res.UnboundNodes,
 		"compileError":   res.CompileError,
 		"dryRun":         res.DryRun,
 	})
