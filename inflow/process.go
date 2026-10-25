@@ -153,6 +153,17 @@ func StartWorkflow(ctx context.Context, store repository.Store, params StartPara
 	// none, and the entry form it may declare — so load it once when either is
 	// in play, and not at all for a continuation that pinned its nodes (a HITL
 	// resume dispatches on a hot path and needs nothing from the record).
+	//
+	// A launch deliberately runs NO graph validation. A run does not have to
+	// enter at the flow's `startNode`: a HITL resume or a Continue After enters
+	// at the nodes the parked node handed back — several of them, in the middle
+	// of the graph — and a partial run is launched on a node the operator picked.
+	// Whole-graph verdicts (what the depends guard answers, reachability from the
+	// start marker) are therefore not statements about the run being asked for,
+	// and refusing one on those grounds would strand a person who has just
+	// answered a HITL task. Validation belongs where the graph is EDITED, with
+	// the author in front of it — the save and compile routes (see
+	// api/workflow/crud.go). Here the graph is only lowered.
 	startNodeIDs := nonEmpty(params.StartNodeIDs)
 	var flow *models.FlowRecord
 	if len(startNodeIDs) == 0 || !params.EntrySkip {

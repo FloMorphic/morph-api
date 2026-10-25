@@ -139,14 +139,25 @@ func (w *InflowWire) RetrieveFlow(msg *nats.Msg) {
 		fmt.Println("inflow: flow not found:", flowId)
 		return
 	}
-	_, compiled, err := FLowCompiler(*rec)
-	if err != nil {
+	// No guard here, on purpose (the default — see inflow.WithGuard): this answers
+	// a run that is already under way, and it may be a run the guard's verdicts do
+	// not describe — a HITL resume or a Continue After entering mid-graph, with the
+	// engine seeding the earlier run's traversal state. Withholding the flow over a
+	// whole-graph verdict would hang exactly the runs that are correct. The graph
+	// is lowered and only a node that truly did not compile is an error, as before.
+	res := CompileFlow(*rec)
+	// Each such node is logged on its own line: by now nobody is looking at the
+	// canvas, so the log is all an operator gets and it should name the node.
+	for _, issue := range res.Diagnostics.Issues {
+		fmt.Printf("inflow: flow %s: %s: %s\n", flowId, issue.Severity, issueText(issue))
+	}
+	if err := res.Diagnostics.Err(); err != nil {
 		msg.Respond([]byte(`{}`))
 		fmt.Printf("inflow: compile flow %s: %v\n", flowId, err)
 		return
 	}
 	flow := inflowModels.Flow{UUID: flowId, Nodes: []inflowModels.Node{}}
-	for _, node := range compiled {
+	for _, node := range res.Nodes {
 		flow.Nodes = append(flow.Nodes, *node)
 	}
 	b, _ := sonic.Marshal(flow)

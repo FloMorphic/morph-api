@@ -7,6 +7,7 @@ package inflow
 // bottom of this file.
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -509,17 +510,32 @@ func buildUntilNode(node *inflowModels.Node, vfn compiler.VueFlowNode, nodeData 
 
 // ---- shared plugin-node scaffolding ----------------------------------------
 
+// ErrPluginAccount marks the one builder failure that is NOT the author's
+// mistake: a plugin-backed node could not be lowered because its infra account
+// could not be minted, which happens when the inflow runtime is not connected
+// (the backend retries that connection in the background — see
+// connectInflowWithRetry in app.go).
+//
+// It is wrapped rather than returned bare so the compile diagnostics can report
+// it under its own code (CodePluginAccountUnresolved) and a client can tell the
+// operator "the engine is unreachable" instead of pointing at the node.
+var ErrPluginAccount = errors.New("plugin infra account unavailable")
+
 // newPluginNode builds the Plugin-node scaffolding shared by every
 // plugin-backed morphic node (LLM / MCP / Cast). The plugin's uniqId must equal
 // the backing extension-table row; the front end stamps that id onto the node
 // data as `extensionId` when the node is dropped from the palette (see
 // pluginUniqId).
 func newPluginNode(vfn compiler.VueFlowNode, data map[string]any) (*inflowNodes.PluginNode, error) {
-	return inflowNodes.NewPluginNode(
+	n, err := inflowNodes.NewPluginNode(
 		getStr(data, "title"),
 		inflowNodes.WithUniqId[*inflowNodes.PluginNode](pluginUniqId(data, vfn.ID)),
 		inflowNodes.WithIdleWaitMinutes(int8(15)),
 	)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrPluginAccount, err)
+	}
+	return n, nil
 }
 
 // pluginUniqId is the identity a plugin node is registered under. It must match

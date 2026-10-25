@@ -19,9 +19,17 @@ type Response struct {
 }
 
 // ErrorResponse is the typical shape placed in Response.Error.
+//
+// Details is the machine-readable half of a refusal, for the failures whose
+// message is not enough to act on: a flow refused because it does not compile
+// carries its compile diagnostics there (every issue with the node and edge it
+// sits on), so the editor can highlight the canvas instead of showing one long
+// sentence. It is omitted entirely when a refusal has nothing to add, which is
+// most of them — the envelope is unchanged for every existing caller.
 type ErrorResponse struct {
 	Message string `json:"message"`
 	Code    int    `json:"code"`
+	Details any    `json:"details,omitempty"`
 }
 
 // Page is the payload of page-based list endpoints, carrying the rows for the

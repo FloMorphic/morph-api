@@ -79,7 +79,7 @@ func registerWorkflowTools(s *server.MCPServer, store repository.Store) {
 	})
 
 	s.AddTool(mcp.NewTool("flo_get_workflow",
-		mcp.WithDescription("Get one workflow by id as the saved FlowRecord (the raw Vue-Flow graph the editor renders — verbose). To READ or EDIT a flow's design prefer flo_export_workflow, which returns the compact portable document. Set compile=true to also return the lowered inflow node graph (what the flow compiles to on the engine)."),
+		mcp.WithDescription("Get one workflow by id as the saved FlowRecord (the raw Vue-Flow graph the editor renders — verbose). To READ or EDIT a flow's design prefer flo_export_workflow, which returns the compact portable document. Set compile=true to also return the lowered inflow node graph (what the flow compiles to on the engine) plus `validation` — the compile pass over the graph: deadlocked joins, nodes that could not be compiled, nodes nothing reaches, each naming the node and edge it sits on and the fix."),
 		mcp.WithString("id", mcp.Required(), mcp.Description("workflow id (flow_…)")),
 		mcp.WithBoolean("compile", mcp.Description("also return the compiled node graph")),
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -94,11 +94,23 @@ func registerWorkflowTools(s *server.MCPServer, store repository.Store) {
 		if !req.GetBool("compile", false) {
 			return jsonResult(rec)
 		}
-		startNodeID, nodes, err := inflow.FLowCompiler(*rec)
-		if err != nil {
-			return mcp.NewToolResultErrorFromErr("compile failed", err), nil
+		// The compile pass is reported, never raised: its issues name the node,
+		// the offending edge and the fix (an agent that gets them back can
+		// repair the flow with flo_plan_patch), which a tool error would
+		// flatten to one sentence. `ok` answers "did it lower" only — the
+		// guard's advice is in `validation` and refuses nothing.
+		res := inflow.CompileFlow(*rec, inflow.WithGuard())
+		lowered := res.Diagnostics.CompileErr()
+		out := map[string]any{
+			"ok": lowered == nil, "flow": rec,
+			"startNodeId": res.StartNodeID, "validation": res.Diagnostics,
 		}
-		return jsonResult(map[string]any{"flow": rec, "startNodeId": startNodeID, "nodes": nodes})
+		if lowered == nil {
+			out["nodes"] = res.Nodes
+		} else {
+			out["error"] = lowered.Error()
+		}
+		return jsonResult(out)
 	})
 
 	s.AddTool(mcp.NewTool("flo_export_workflow",

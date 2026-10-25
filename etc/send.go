@@ -22,6 +22,13 @@ func Fail(c fiber.Ctx, code int, message string) error {
 	return Send(c, code, nil, models.ErrorResponse{Code: code, Message: message})
 }
 
+// FailWith is Fail plus the structured detail of the refusal (see
+// models.ErrorResponse.Details) — what a client needs to do more than print the
+// message, such as the compile issues of a flow that was refused.
+func FailWith(c fiber.Ctx, code int, message string, details any) error {
+	return Send(c, code, nil, models.ErrorResponse{Code: code, Message: message, Details: details})
+}
+
 // FailFromRepo maps a repository error to an HTTP response: ErrNotFound → 404,
 // anything else → 500. The 404 message is caller-supplied so it can name the
 // entity ("workflow not found").

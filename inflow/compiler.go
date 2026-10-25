@@ -1,7 +1,10 @@
 package inflow
 
 import (
+	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/FloMorphic/morph-api/models"
 	compiler "github.com/Inflowenger/inflow-fusion/compilers/vueFlow"
@@ -65,18 +68,120 @@ func GetStartNodeId(f models.FlowRecord) (string, error) {
 	}
 	return startNodeId, nil
 }
-func FLowCompiler(f models.FlowRecord) (string, map[string]*inflowModels.Node, error) {
+
+// CompileResult is one compile pass over a saved flow: the lowered graph plus
+// everything the pass found wrong with it (see Diagnostics). It never fails —
+// a flow that cannot be compiled comes back with error-severity issues and
+// whatever was lowered before the walk stopped, so a caller can report the
+// mistakes instead of a single string. Diagnostics.Err() is the gate.
+type CompileResult struct {
+	StartNodeID string
+	Nodes       map[string]*inflowModels.Node
+	Diagnostics Diagnostics
+}
+
+// CompileOption tunes one compile pass. See WithGuard.
+type CompileOption func(*compileOptions)
+
+type compileOptions struct{ guard bool }
+
+// WithGuard adds the whole-graph validation to a compile pass: the depends
+// guard (a node may not wait for a step that comes after it) and the
+// reachability warnings. Without it — the default — a flow is only lowered, and
+// the sole thing reported is a node that genuinely did not compile.
+//
+// It is off by default, in this compiler and in fusion's, because those
+// verdicts are statements about ONE traversal — the one that starts at the
+// flow's `startNode` — and a run does not have to be that traversal. A HITL
+// resume and a Continue After enter at the nodes the parked node handed back
+// (several of them, mid-graph), a partial run enters at a node the operator
+// picked, and on a resume the engine seeds the earlier run's traversal
+// snapshot, so a join the guard calls deadlocked may be exactly the join that
+// is already satisfied.
+//
+// So it is asked for where a flow is SAVED — with the author in front of the
+// canvas, where naming the node and the edge to change is help — and the
+// findings are never a refusal: nothing in this API turns a guard verdict into
+// a failed request or a blocked run.
+func WithGuard() CompileOption {
+	return func(o *compileOptions) { o.guard = true }
+}
+
+// CompileFlow lowers a flow's Vue-Flow graph to the inflow node graph, and with
+// WithGuard also validates the result (see Diagnostics).
+//
+// Validation is worth asking for where a flow is saved rather than where it is
+// run: the compiled graph is otherwise only produced on the wire, when a running
+// process asks for it (see InflowWire.RetrieveFlow), where a mistake has nowhere
+// to go but a log line. On save the author is still looking at the canvas, and
+// every issue names the node and the edge to change.
+//
+// The guard is also run here by hand rather than through fusion's own
+// WithDependsGuard, and AFTER the promissall post-pass below. It has to be: a
+// fan-in node's `depends` is edge-derived and only exists after that pass, so a
+// guard running inside Compile would validate every join as if it waited for
+// nothing — which is precisely the node the deadlock rule is about.
+func CompileFlow(f models.FlowRecord, opts ...CompileOption) CompileResult {
+	var o compileOptions
+	for _, apply := range opts {
+		apply(&o)
+	}
+
+	// A clean pass reports an empty issue list, not a null one: every consumer
+	// of this iterates `issues` and branches on `ok`.
+	res := CompileResult{
+		Nodes:       map[string]*inflowModels.Node{},
+		Diagnostics: Diagnostics{OK: true, Issues: []compiler.ValidationIssue{}},
+	}
+
 	startNodeId, err := GetStartNodeId(f)
 	if err != nil {
-		return startNodeId, nil, err
+		res.Diagnostics.add(compiler.ValidationIssue{
+			Code:       CodeStartNodeMissing,
+			Severity:   compiler.SeverityError,
+			Message:    err.Error(),
+			Suggestion: "add a Start node and connect it to the first step of the flow.",
+		})
+		return res
 	}
-	cmpr := compiler.NewVueFlowCompiler(compiler.WithEachNodeFunc(NodeBuilder))
-	if cmpr == nil {
-		return startNodeId, nil, fmt.Errorf("error occurred in compile process")
+	res.StartNodeID = startNodeId
+	res.Diagnostics.StartNodeID = startNodeId
+
+	// Builder refusals are recorded by the hook, not read off Compile's error
+	// map: the walk returns a nested node's error up to its root, and Compile
+	// files that under the START node's id — so a flow whose fifth node is
+	// unbound would be reported as a broken Start. The hook knows which node it
+	// was called for, so the attribution is taken from there and the node's own
+	// error is still returned, leaving the walk's behaviour (it stops there)
+	// exactly as it was.
+	buildErrs := map[string]error{}
+	hook := func(vfn compiler.VueFlowNode) (*inflowModels.Node, error) {
+		node, err := NodeBuilder(vfn)
+		if err != nil {
+			buildErrs[vfn.ID] = err
+		}
+		return node, err
 	}
-	l, errs := cmpr.Compile(startNodeId, f.ViewFlow)
-	for _, e := range errs {
-		return startNodeId, l, e
+	// No fusion guard option: it is off by default there too, and the guard this
+	// pass runs happens further down, after the post-pass (see the doc comment).
+	cmpr := compiler.NewVueFlowCompiler(compiler.WithEachNodeFunc(hook))
+	nodes, compileErrs := cmpr.Compile(startNodeId, f.ViewFlow)
+	if nodes == nil {
+		nodes = map[string]*inflowModels.Node{}
+	}
+	res.Nodes = nodes
+	// Anything the compiler reported that no builder call owned (it has its own
+	// failure modes, and may grow more) is kept under the id it came with.
+	for nodeId, err := range compileErrs {
+		if _, ok := buildErrs[nodeId]; !ok && len(buildErrs) == 0 {
+			buildErrs[nodeId] = err
+		}
+	}
+
+	// Builder refusals, in node-id order so two compiles of the same graph
+	// report the same list in the same order.
+	for _, nodeId := range sortedKeys(buildErrs) {
+		res.Diagnostics.add(buildIssue(f, nodeId, buildErrs[nodeId]))
 	}
 
 	// Post-pass — edge-derived wiring the per-node hook cannot see (it only gets
@@ -87,7 +192,7 @@ func FLowCompiler(f models.FlowRecord) (string, map[string]*inflowModels.Node, e
 	// listener recovers from the request body at run time (not from the vueFlow
 	// graph). See the svc handler in port.go.
 	for _, n := range f.ViewFlow.Nodes {
-		cn, ok := l[n.ID]
+		cn, ok := nodes[n.ID]
 		if !ok || cn == nil {
 			continue
 		}
@@ -96,7 +201,102 @@ func FLowCompiler(f models.FlowRecord) (string, map[string]*inflowModels.Node, e
 		}
 	}
 
-	return startNodeId, l, nil
+	if !o.guard {
+		return res
+	}
+
+	// The engine's own guard over the finished graph: a node may not wait for a
+	// step that comes after it (every code and the reasoning are in the fusion
+	// compiler's docs). Its issues already name the node, the offending depends
+	// entry, the edge to re-point and the ids it may legally target instead.
+	res.Diagnostics.add(compiler.ValidateDepends(startNodeId, nodes).Issues...)
+
+	// Nodes the walk never reached. Skipped when a builder refused a node: the
+	// walk stops at such a node, so everything past it is "unreachable" for a
+	// reason the author has already been told about.
+	if len(buildErrs) == 0 {
+		res.Diagnostics.add(unreachableIssues(f, nodes)...)
+	}
+
+	return res
+}
+
+// FLowCompiler is CompileFlow for the callers that only want the lowered graph
+// and one error, with no guard (see WithGuard): the error is a node that
+// genuinely did not compile, exactly as it was before the guard existed. It is
+// what the engine wire and the run paths use — a running flow is never refused
+// over a whole-graph verdict about a traversal it is not making.
+func FLowCompiler(f models.FlowRecord) (string, map[string]*inflowModels.Node, error) {
+	res := CompileFlow(f)
+	return res.StartNodeID, res.Nodes, res.Diagnostics.Err()
+}
+
+// buildIssue turns one builder refusal into an issue. A plugin node that could
+// not mint its infra account gets its own code: the graph is fine, the runtime
+// is not connected, and telling an author to fix their flow would be wrong.
+func buildIssue(f models.FlowRecord, nodeId string, err error) compiler.ValidationIssue {
+	issue := compiler.ValidationIssue{
+		Code:     CodeNodeBuildFailed,
+		Severity: compiler.SeverityError,
+		NodeId:   nodeId,
+		Message:  fmt.Sprintf("%s could not be compiled: %v", nodeLabel(f, nodeId), err),
+	}
+	if errors.Is(err, ErrPluginAccount) {
+		issue.Code = CodePluginAccountUnresolved
+		issue.Message = fmt.Sprintf("%s could not be compiled: %v", nodeLabel(f, nodeId), err)
+		issue.Suggestion = "this is the inflow runtime being unreachable, not a mistake in the flow: check the engine connection and try again."
+		return issue
+	}
+	issue.Suggestion = "open the node and complete what it is missing — the steps after it are not compiled while it fails."
+	return issue
+}
+
+// unreachableIssues reports the nodes of the graph the walk never reached from
+// the start node: they are saved, they compile, and they never run.
+func unreachableIssues(f models.FlowRecord, nodes map[string]*inflowModels.Node) []compiler.ValidationIssue {
+	out := []compiler.ValidationIssue{}
+	for _, n := range f.ViewFlow.Nodes {
+		if _, ok := nodes[n.ID]; ok {
+			continue
+		}
+		out = append(out, compiler.ValidationIssue{
+			Code:     CodeNodeUnreachable,
+			Severity: compiler.SeverityWarning,
+			NodeId:   n.ID,
+			Message: fmt.Sprintf("%s is not reachable from the start node, so it never runs",
+				nodeLabel(f, n.ID)),
+			Suggestion: "connect it to the flow, or remove it.",
+		})
+	}
+	return out
+}
+
+// nodeLabel names a node the way a message should: by its title when it has one,
+// always with its kind, so a reader recognises it on the canvas.
+func nodeLabel(f models.FlowRecord, nodeId string) string {
+	for _, n := range f.ViewFlow.Nodes {
+		if n.ID != nodeId {
+			continue
+		}
+		title := ""
+		if data, ok := n.Data.(map[string]any); ok {
+			title = strings.TrimSpace(getStr(data, "title"))
+		}
+		if title != "" {
+			return fmt.Sprintf("node %q (%s)", title, n.Type)
+		}
+		return fmt.Sprintf("node %q", n.Type)
+	}
+	return fmt.Sprintf("node %s", nodeId)
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // inboundSources returns the ids of every node with an edge into nodeId.

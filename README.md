@@ -24,7 +24,75 @@ Every response is wrapped in `{ "data": ..., "error": ... }`.
 | GET    | `/flow`           | `?page=1&per_page=12&search=`         |
 | GET    | `/flow/id/:id`    | —                                     |
 | GET    | `/flow/id/:id/export` | the flow as a portable document (the editor's export file: a designer graph patch under a small header, no install-local identity) |
+| GET    | `/flow/id/:id/compile` | the lowered inflow node graph; `?validate=true` adds `validation` (see below) |
 | DELETE | `/flow/id/:id`    | —                                     |
+
+#### Compile validation — help on save, never a gate
+
+A Vue-Flow graph is lowered to the engine's node graph by the compiler in
+[`inflow/compiler.go`](inflow/compiler.go), and inflow-fusion can validate the
+result: a node with `depends` (every fan-in join has one — a `promissall` waits
+on all its inbound nodes) may not wait for a step that can only run *after* it,
+or the first crossing of the flow deadlocks there.
+
+It is **opt-in** — `compiler.WithDependsGuard()` in fusion,
+`inflow.WithGuard()` here — and it is **advice, not a verdict on a request**.
+Nothing in this API refuses anything because of it: no save, no launch, no
+resume, no scheduled fire, and no status code anywhere changes over a guard
+finding. The reason is that these findings describe **one traversal — the one
+starting at the flow's `startNode`** — while a run need not be that traversal: a
+HITL resume and a Continue After enter at the nodes the parked node handed back
+(several of them, mid-graph, with the engine seeding the earlier run's traversal
+state), and a partial run enters at a node the operator picked. Judging those by
+a start-node walk would stall correct work, so the guard is asked for where a
+flow is **saved**, with the author in front of the canvas, and left off
+everywhere else.
+
+- **`POST /flow`** — the one place it runs by default. Returns the saved record
+  with `validation`: the save already happened, and this is what the editor can
+  show while the author is still looking at the graph.
+- **`GET /flow/id/:id/compile?validate=true`** — the same report on demand, for
+  a client re-checking without saving. Always `200`; the lowered nodes come with
+  it. (Plain `/compile` lowers only, as before.)
+- **`POST /flow/import`**, `flo_apply_patch`, `flo_plan_patch`,
+  `flo_get_workflow?compile=true` — landing a document is a save, so they report
+  `validation` too, for the operator or for an agent to repair the graph with.
+  Their `compileError` / `ok` fields keep their old, narrower meaning: *the graph
+  did not lower*. Guard findings never touch them.
+- Everything that **runs** a flow (`POST /process`, trigger fires, the
+  scheduler, `inflow.req.flow.get.*` on the wire) compiles without the guard.
+  A node that genuinely did not compile is still an error there, exactly as it
+  was before any of this existed.
+
+```jsonc
+{
+  "ok": false, "startNodeId": "s", "errorCount": 1, "warningCount": 1,
+  "issues": [
+    { "code": "depend_deadlock", "severity": "error",
+      "nodeId": "j",                       // the join that blocks
+      "dependsOn": "after", "edgeId": "e_back",   // the edge to re-point
+      "message": "node \"j\" depends on \"after\", but …",
+      "suggestion": "re-point edge \"e_back\" so it targets …",
+      "suggestedTargets": ["a"] },         // where it may legally point
+    { "code": "node_unreachable", "severity": "warning", "nodeId": "orphan",
+      "message": "node \"Orphan\" (js) is not reachable from the start node …" }
+  ]
+}
+```
+
+Every issue names the node and, where there is one, the edge — enough for a
+canvas to highlight the mistake.
+
+The **guard's** codes, which are advice only (`inflow.IsGuardCode`):
+`depend_deadlock`, `depend_unreachable`, `depend_unknown_node`, `depend_self`,
+`depend_without_edge` (warning) and `node_unreachable` (warning — the node
+compiles, it just never runs).
+
+The **lowering's** codes, which mean the graph is incomplete and are what
+`compileError` / a `422` is still about: `start_node_missing`,
+`node_build_failed` (a node whose data the builder refused — a plugin node with
+no action) and `plugin_account_unresolved` (the inflow runtime is unreachable,
+*not* a mistake in the flow).
 
 ### Contexts — `ContextRecord`, page-paginated
 

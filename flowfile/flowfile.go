@@ -185,6 +185,12 @@ type Result struct {
 	StartNodeID    string                        `json:"startNodeId,omitempty"`
 	Compiled       map[string]*inflowModels.Node `json:"compiled,omitempty"`
 	DryRun         bool                          `json:"dryRun"`
+	// Validation is the compile pass in full: every issue with the node and the
+	// edge it sits on, plus a suggested fix. It is strictly advice — a flow with
+	// findings still imports and still runs — and it is reported apart from
+	// CompileError, which stays the narrower "this graph did not lower" answer
+	// callers already branch on (see Import).
+	Validation inflow.Diagnostics `json:"validation"`
 }
 
 // ErrInvalid marks an import rejected for its content (as opposed to a store
@@ -253,10 +259,16 @@ func Import(ctx context.Context, store repository.Store, in Input) (*Result, err
 	inflow.NormalizeGraph(&rec)
 
 	res := &Result{Problems: problems, MissingActions: missing, UnboundNodes: unbound, DryRun: in.DryRun}
-	if startID, compiled, err := inflow.FLowCompiler(rec); err != nil {
+	// Guarded, because landing a document is a save of a flow: the findings are
+	// what the importer shows the operator (or hands an agent to repair with).
+	// `CompileError` stays what it always was — a graph that did not lower — so a
+	// caller branching on it is unaffected by the guard's advice.
+	compiled := inflow.CompileFlow(rec, inflow.WithGuard())
+	res.Validation = compiled.Diagnostics
+	if err := compiled.Diagnostics.CompileErr(); err != nil {
 		res.CompileError = err.Error()
 	} else {
-		res.StartNodeID, res.Compiled = startID, compiled
+		res.StartNodeID, res.Compiled = compiled.StartNodeID, compiled.Nodes
 	}
 	if !in.DryRun {
 		if err := store.Workflows().Upsert(ctx, &rec); err != nil {

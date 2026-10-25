@@ -86,7 +86,7 @@ func registerDesignerTools(s *server.MCPServer, store repository.Store) {
 
 	s.AddTool(mcp.NewTool("flo_plan_patch",
 		withOpts(patchArgs(),
-			mcp.WithDescription("Convert a CANDIDATE graph patch into a Vue-Flow graph and compile it — no save. Returns the lowered node graph on success (or the compile error), plus any design problems. Use it to check a draft before flo_apply_patch.\n\n"+patchGuide),
+			mcp.WithDescription("Convert a CANDIDATE graph patch into a Vue-Flow graph and compile it — no save. Returns the lowered node graph on success (or the compile error), plus any design problems and `validation` — the compile pass issue by issue (a join waiting on a step that comes after it, a node that would not compile, a node nothing reaches), each with the node/edge to change. Use it to check a draft before flo_apply_patch.\n\n"+patchGuide),
 		)...,
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		doc, bad := parsePatchInput(req)
@@ -106,6 +106,10 @@ func registerDesignerTools(s *server.MCPServer, store repository.Store) {
 		out := map[string]any{
 			"ok": res.CompileError == "", "problems": res.Problems, "missingActions": res.MissingActions,
 			"unboundNodes": res.UnboundNodes, "graph": res.Flow.ViewFlow,
+			// The compile pass issue by issue: which node, which edge, and the
+			// ids an offending edge may legally target instead — enough to fix
+			// the draft and plan again without a round trip to the operator.
+			"validation": res.Validation,
 		}
 		if res.CompileError != "" {
 			out["error"] = res.CompileError
@@ -138,6 +142,7 @@ func registerDesignerTools(s *server.MCPServer, store repository.Store) {
 		return jsonResult(map[string]any{
 			"flow": res.Flow, "problems": res.Problems, "missingActions": res.MissingActions,
 			"unboundNodes": res.UnboundNodes, "compileError": res.CompileError,
+			"validation": res.Validation,
 		})
 	})
 }

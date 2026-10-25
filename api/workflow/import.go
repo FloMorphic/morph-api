@@ -70,7 +70,10 @@ func (ctl *controller) importFlow(c fiber.Ctx) error {
 		"missingActions": res.MissingActions,
 		"unboundNodes":   res.UnboundNodes,
 		"compileError":   res.CompileError,
-		"dryRun":         res.DryRun,
+		// The compile pass issue by issue (node, edge, suggestion) — what
+		// compileError says in one sentence. See flowfile.Result.Validation.
+		"validation": res.Validation,
+		"dryRun":     res.DryRun,
 	})
 }
 
