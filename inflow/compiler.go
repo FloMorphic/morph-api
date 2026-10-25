@@ -73,7 +73,11 @@ func GetStartNodeId(f models.FlowRecord) (string, error) {
 // everything the pass found wrong with it (see Diagnostics). It never fails —
 // a flow that cannot be compiled comes back with error-severity issues and
 // whatever was lowered before the walk stopped, so a caller can report the
-// mistakes instead of a single string. Diagnostics.Err() is the gate.
+// mistakes instead of a single string.
+//
+// Nothing here is a gate. A caller that genuinely needs the graph complete asks
+// Diagnostics.CompileErr(), which answers "did this lower" and leaves out every
+// guard verdict — those are only ever shown.
 type CompileResult struct {
 	StartNodeID string
 	Nodes       map[string]*inflowModels.Node
