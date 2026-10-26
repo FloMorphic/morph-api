@@ -90,7 +90,10 @@ func mintCred(input models.CredRequest) (string, error) {
 	}
 	pub, _ := kp.PublicKey()
 
-	var perm = InfraSpaces.PluginCredentialStrictPermission(input.Name, input.PluginId, pub)
+	perm,err := InfraSpaces.PluginCredentialStrictPermission(input.Name, input.PluginId, pub)
+	if err!=nil{
+		return "",err
+	}
 	if input.Access == models.MultiPluginAccess {
 		// Open credentials leave Pub/Sub allow-lists empty, which NATS reads as
 		// "allow all". Adding a single publish subject would flip that to
