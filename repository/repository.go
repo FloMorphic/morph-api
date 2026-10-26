@@ -80,8 +80,46 @@ type CRUD[T any] interface {
 	Delete(ctx context.Context, id string) error
 }
 
-// WorkflowRepository is CRUD for saved workflows (FlowRecord).
-type WorkflowRepository = CRUD[models.FlowRecord]
+// WorkflowRepository is CRUD for saved workflows (FlowRecord), with one
+// deliberate asymmetry: a flow is written and read whole, but LISTED as a
+// models.FlowSummary — the row without its Vue Flow graph.
+//
+// It is spelled out here rather than aliasing CRUD[models.FlowRecord] so the
+// heavy listing does not exist to be called: a flow's graph is tens of
+// kilobytes and no list renders it, so a page of records was megabytes of JSON
+// (and a JSON decode per row) spent on a field every caller threw away. The
+// graph comes from GetByID, for the one flow that is actually opened.
+type WorkflowRepository interface {
+	// Upsert inserts or updates the flow. On insert (empty ID) it assigns an ID
+	// and CreatedAt; on update it preserves the original CreatedAt, and keeps
+	// the stored tags / preferences when the save says nothing about them (see
+	// models.FlowRecord).
+	//
+	// It also DERIVES the flow's plugin list from the graph it is storing
+	// (models.CollectFlowPlugins) and writes that onto the record, replacing
+	// anything the caller sent: every road a graph takes into the database ends
+	// here, so this is the one place where the list cannot fall out of step
+	// with the graph it describes.
+	Upsert(ctx context.Context, w *models.FlowRecord) error
+	// GetByID returns the whole flow, graph included.
+	GetByID(ctx context.Context, id string) (*models.FlowRecord, error)
+	// List returns a page of summaries ordered newest-first plus the total
+	// number of rows matching the filters (across all pages). The backends do
+	// not select view_flow for it; the node count rides along, counted in SQL,
+	// and so does the flow's derived plugin list — the one thing about a graph
+	// a list could not otherwise show without reading every graph on the page.
+	List(ctx context.Context, p ListParams) (items []models.FlowSummary, total int64, err error)
+	// ListRecords is the same page as List, whole records, graphs included —
+	// for the caller whose cost is a round trip rather than a byte.
+	//
+	// It exists for the MCP tool (flo_list_workflows): an agent lists flows in
+	// order to work on them, so a summary would only buy the saving back as a
+	// read per flow, one tool call at a time. It is deliberately NOT what the
+	// REST list and the web app use — they draw a title and a badge — so the
+	// one query that carries every graph it touches has exactly one caller.
+	ListRecords(ctx context.Context, p ListParams) (items []models.FlowRecord, total int64, err error)
+	Delete(ctx context.Context, id string) error
+}
 
 // ContextRepository is CRUD for context documents (ContextRecord).
 type ContextRepository = CRUD[models.ContextRecord]

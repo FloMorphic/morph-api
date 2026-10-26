@@ -190,3 +190,70 @@ func TestPatchToolsStampPlugins(t *testing.T) {
 	}
 	call(t, s, "flo_apply_patch", map[string]any{"nodes": nodes}, true) // title required
 }
+
+// flo_list_workflows answers the WHOLE record by default — the graph included,
+// as it did before the REST list was slimmed to summaries — because an agent
+// lists flows to work on them and a summary would cost it a call per flow. The
+// lighter shapes stay available by name.
+func TestListWorkflowsDetail(t *testing.T) {
+	s, store := toolServer(t)
+	ctx := context.Background()
+	doc := map[string]any{
+		"title": "Listed",
+		"nodes": []any{
+			map[string]any{"ref": "start", "kind": "startNode", "title": "Start"},
+			map[string]any{"ref": "probe", "kind": "plugin", "title": "Probe", "data": map[string]any{"action": "osquery.query"}},
+		},
+		"edges": []any{map[string]any{"from": "start", "to": "probe"}},
+	}
+	imported := call(t, s, "flo_import_workflow", map[string]any{"workflow": doc}, false)
+	id := imported["flow"].(map[string]any)["id"].(string)
+
+	// Default: the record, graph and all.
+	out := call(t, s, "flo_list_workflows", nil, false)
+	if out["detail"] != "graph" || out["total"].(float64) != 1 {
+		t.Fatalf("default listing: %v", out)
+	}
+	row := out["list"].([]any)[0].(map[string]any)
+	graph, ok := row["view_flow"].(map[string]any)
+	if !ok {
+		t.Fatalf("default listing dropped the graph: %v", row)
+	}
+	if row["id"] != id || len(graph["nodes"].([]any)) != 2 {
+		t.Fatalf("default listing row: %v", row)
+	}
+
+	// "document": the portable form, the id beside it, no canvas JSON and no
+	// install-local identity.
+	out = call(t, s, "flo_list_workflows", map[string]any{"detail": "document"}, false)
+	row = out["list"].([]any)[0].(map[string]any)
+	if row["id"] != id || row["nodeCount"].(float64) != 2 {
+		t.Fatalf("document listing row: %v", row)
+	}
+	document, ok := row["document"].(map[string]any)
+	if !ok || document["title"] != "Listed" || len(document["nodes"].([]any)) != 2 {
+		t.Fatalf("document listing: %v", row)
+	}
+	if raw, _ := json.Marshal(out); strings.Contains(string(raw), "view_flow") {
+		t.Fatalf("document listing carries the raw graph: %s", raw)
+	}
+
+	// "summary": the cheap list — no graph in any form.
+	out = call(t, s, "flo_list_workflows", map[string]any{"detail": "summary"}, false)
+	row = out["list"].([]any)[0].(map[string]any)
+	if row["id"] != id || row["title"] != "Listed" || row["nodeCount"].(float64) != 2 {
+		t.Fatalf("summary listing row: %v", row)
+	}
+	if raw, _ := json.Marshal(out); strings.Contains(string(raw), "view_flow") || strings.Contains(string(raw), "\"nodes\"") {
+		t.Fatalf("summary listing carries a graph: %s", raw)
+	}
+
+	// An unknown mode is a tool error, not a silent fallback.
+	call(t, s, "flo_list_workflows", map[string]any{"detail": "everything"}, true)
+
+	// Sanity: the record the default listing returned is the stored one.
+	rec, err := store.Workflows().GetByID(ctx, id)
+	if err != nil || len(rec.ViewFlow.Nodes) != 2 {
+		t.Fatalf("stored flow: %v %+v", err, rec)
+	}
+}

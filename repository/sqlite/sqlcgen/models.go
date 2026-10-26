@@ -164,6 +164,7 @@ type Workflow struct {
 	ViewFlow    string
 	Tags        string
 	Preferences string
+	Plugins     string
 	CreatedAt   int64
 	UpdatedAt   int64
 }

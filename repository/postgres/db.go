@@ -120,6 +120,13 @@ func Open(source string) (repository.Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("postgres: apply migrations: %w", err)
 	}
+	// The flows saved before the plugin column existed get their derived list
+	// here, once (see the sqlite twin). Best-effort — never a reason not to boot.
+	if n, err := backfillWorkflowPlugins(ctx, db); err != nil {
+		fmt.Printf("warning: deriving flow plugin lists: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("derived the plugin list of %d flow(s)\n", n)
+	}
 
 	// Vector sidecar: embeddings stay in sqlite-vec (see the package comment).
 	var vec *sqlite.VectorIndex
@@ -284,6 +291,9 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 	migrations := []string{
 		`ALTER TABLE workflows ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE workflows ADD COLUMN IF NOT EXISTS preferences TEXT NOT NULL DEFAULT '{}'`,
+		// Default '' rather than '[]' — the sentinel the plugin-list backfill
+		// looks for (see the sqlite twin).
+		`ALTER TABLE workflows ADD COLUMN IF NOT EXISTS plugins TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range migrations {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

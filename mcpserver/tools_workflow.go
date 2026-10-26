@@ -56,6 +56,26 @@ This is the declarative replacement for the pattern of wiring a JS node after th
 CAREFUL when a flow DEPENDS on an entry field: filling the form is the launcher's choice, so a value can arrive absent (no default, nothing submitted — a trigger or schedule launch supplies nothing) or null/empty (a field the person cleared). Design the flow to check rather than to assume: a js node right after the start node that reads _get("$._entry"), supplies the fallbacks and routes a missing field to a reporting branch, with the rest of the graph depending on THAT node's output. "required": true refuses an empty launch, but it does not make any individual field non-null.
 Launching: read the form with flo_get_flow_entry (it returns the fields' starting values too), then pass the filled values as flo_start_process's "entry". A flow that declares no entry answers entry:null and launches as it always did.`
 
+// The `detail` modes of flo_list_workflows — how much of each flow a listing
+// carries.
+//
+// The REST list answers summaries (models.FlowSummary): a browser draws a title
+// and a node badge, then fetches the one flow it opens. This tool keeps the
+// WHOLE record, graph included, as its default, because an agent reads this
+// surface for a different reason — it lists flows in order to work on them, and
+// a summary would only buy the saving back as a flo_get_workflow per row, with
+// the flow's design arriving one tool call at a time. The wire cost a browser
+// cares about is not the cost an agent cares about; a round trip is.
+//
+// "summary" and "document" are there for when the agent does want the cheap
+// answer: "which flows exist" needs no graphs, and a design is more readable as
+// the portable document than as raw canvas JSON.
+const (
+	detailGraph    = "graph"
+	detailSummary  = "summary"
+	detailDocument = "document"
+)
+
 // registerWorkflowTools exposes the /flow surface: read (list, get with an
 // optional compile pass) and the portable-document road in and out (import /
 // export). Authoring goes through the designer tools (flo_plan_patch /
@@ -67,15 +87,56 @@ func registerWorkflowTools(s *server.MCPServer, store repository.Store) {
 
 	s.AddTool(mcp.NewTool("flo_list_workflows",
 		withOpts(pageArgs(),
-			mcp.WithDescription("List saved workflows (FlowRecord), newest first, paginated. `tags` narrows the list to flows carrying at least one of the given labels."),
+			mcp.WithDescription("List saved workflows, newest first, paginated. Each row is the full FlowRecord — its Vue-Flow graph under `view_flow` included — so a page answers what the flows ARE, not just what they are called, without a follow-up call per flow. `tags` narrows the list to flows carrying at least one of the given labels.\n\n"+
+				"`detail` trades that completeness for size when you do not need it:\n"+
+				"- \"graph\" (default) — the whole record per row, graph included. What to list with when you are about to work on these flows.\n"+
+				"- \"document\" — the portable workflow document per row (what flo_export_workflow returns) under `document`, with the flow's id beside it. Roughly half the size and the readable form of a design: prefer it when you are reading or editing the flows rather than inspecting the canvas.\n"+
+				"- \"summary\" — id, title, tags, preferences, the flow's plugin list, node count, timestamps, no graph. For \"which flows exist\", for picking one by name, and for \"which plugins do these flows need\"; raise per_page freely here.\n\n"+
+				"`per_page` is the dial for how much comes back (1-100, default 20): a graph is thousands of tokens, so a wide page of them is a large reply. Narrow with `search` / `tags`, or list at \"summary\" first and read the flows you picked."),
 			mcp.WithString("tags", mcp.Description("optional comma-separated labels; a flow is kept when it carries at least one of them")),
+			mcp.WithString("detail", mcp.Description(`how much of each flow to return: "summary" (default), "document" (the portable document per flow) or "graph" (the raw FlowRecord)`)),
 		)...,
 	), func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		items, total, err := repo.List(ctx, listParams(req))
+		detail := strings.ToLower(strings.TrimSpace(req.GetString("detail", detailGraph)))
+		switch detail {
+		case "":
+			detail = detailGraph
+		case detailGraph, detailSummary, detailDocument:
+		default:
+			return mcp.NewToolResultError(`detail must be "graph", "document" or "summary"`), nil
+		}
+		p := listParams(req)
+		// A summary page and a record page are two reads of the same page, and
+		// each is one query: ListRecords is the listing that selects the graph
+		// (the REST list's twin, and this tool is its only caller), so a
+		// detailed answer never becomes a read per row.
+		if detail == detailSummary {
+			items, total, err := repo.List(ctx, p)
+			if err != nil {
+				return repoError(err, "workflows not found")
+			}
+			return jsonResult(map[string]any{"list": items, "total": total, "detail": detail})
+		}
+		records, total, err := repo.ListRecords(ctx, p)
 		if err != nil {
 			return repoError(err, "workflows not found")
 		}
-		return jsonResult(map[string]any{"list": items, "total": total})
+		if detail == detailGraph {
+			return jsonResult(map[string]any{"list": records, "total": total, "detail": detail})
+		}
+		rows := make([]any, 0, len(records))
+		for _, rec := range records {
+			// The document carries no install-local identity (that is the point
+			// of it), so the id travels beside it — it is what every other tool
+			// here is addressed by.
+			rows = append(rows, map[string]any{
+				"id":        rec.ID,
+				"nodeCount": len(rec.ViewFlow.Nodes),
+				"updatedAt": rec.UpdatedAt,
+				"document":  flowfile.Export(ctx, store, rec),
+			})
+		}
+		return jsonResult(map[string]any{"list": rows, "total": total, "detail": detail})
 	})
 
 	s.AddTool(mcp.NewTool("flo_get_workflow",

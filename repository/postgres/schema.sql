@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS workflows (
     -- Flow-level, non-graph choices as a JSON object (models.FlowPreferences) —
     -- today the entry form a flow asks to have filled in before it runs.
     preferences TEXT  NOT NULL DEFAULT '{}',
+    -- The plugins the flow's wired-up plugin-backed nodes run through, a JSON
+    -- array derived from the graph on every save (models.CollectFlowPlugins) —
+    -- what a flow list shows without reading a single graph. '' is the sentinel
+    -- for a row whose list was never derived; no plugins is '[]'.
+    plugins    TEXT   NOT NULL DEFAULT '',
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL
 );

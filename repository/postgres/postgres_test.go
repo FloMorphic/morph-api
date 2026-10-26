@@ -2,13 +2,18 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/FloMorphic/morph-api/models"
 	"github.com/FloMorphic/morph-api/repository"
+	compiler "github.com/Inflowenger/inflow-fusion/compilers/vueFlow"
 )
 
 // These tests need a real server — every statement here is hand-written SQL, so
@@ -934,5 +939,136 @@ func TestVectorIndexSurvivesASwitch(t *testing.T) {
 		t.Fatalf("search the postgres-era index from sqlite: %v", err)
 	} else if len(hits) != 1 || hits[0].Content != "postgres-era" {
 		t.Fatalf("the postgres-era index is not in the shared file: %+v", hits)
+	}
+}
+
+// The flow list is the summary — no graph read, no graph sent — with the node
+// count derived from the stored JSON. The count is why this needs a server: the
+// guarded jsonb_array_length subquery (see workflowSummaryColumns) is the one
+// expression here sqlite's twin cannot vouch for, and it has to hold for a flow
+// with no graph and for the blank text an un-migrated row carries.
+func TestWorkflowListSummary(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	flows := st.Workflows()
+
+	graphed := &models.FlowRecord{Title: "pg summary graphed", ViewFlow: compiler.VueFlow{
+		Nodes: []compiler.VueFlowNode{{ID: "n1"}, {ID: "n2"}},
+		Edges: []compiler.Edges{{ID: "e1", Source: "n1", Target: "n2"}},
+	}}
+	if err := flows.Upsert(ctx, graphed); err != nil {
+		t.Fatalf("upsert graphed: %v", err)
+	}
+	t.Cleanup(func() { _ = flows.Delete(ctx, graphed.ID) })
+	legacy := &models.FlowRecord{Title: "pg summary legacy"}
+	if err := flows.Upsert(ctx, legacy); err != nil {
+		t.Fatalf("upsert legacy: %v", err)
+	}
+	t.Cleanup(func() { _ = flows.Delete(ctx, legacy.ID) })
+
+	db, err := sql.Open("pgx", os.Getenv("TEST_POSTGRES_DSN"))
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.ExecContext(ctx, `UPDATE workflows SET view_flow = '' WHERE id = $1`, legacy.ID); err != nil {
+		t.Fatalf("blank view_flow: %v", err)
+	}
+
+	items, _, err := flows.List(ctx, repository.ListParams{Search: "pg summary", Limit: 10})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	counts := map[string]int{}
+	for _, it := range items {
+		counts[it.Title] = it.NodeCount
+	}
+	if len(counts) != 2 {
+		t.Fatalf("list returned %d rows, want 2: %+v", len(items), items)
+	}
+	if counts["pg summary graphed"] != 2 {
+		t.Fatalf("node count = %d, want 2", counts["pg summary graphed"])
+	}
+	if counts["pg summary legacy"] != 0 {
+		t.Fatalf("blank view_flow counted %d nodes, want 0", counts["pg summary legacy"])
+	}
+
+	payload, err := json.Marshal(items)
+	if err != nil {
+		t.Fatalf("marshal summaries: %v", err)
+	}
+	if strings.Contains(string(payload), "view_flow") {
+		t.Fatalf("list payload carries the graph: %s", payload)
+	}
+
+	// ListRecords is the same page read whole — one query with the graphs, for
+	// the MCP tool. Same rows and order as the summaries.
+	recs, _, err := flows.ListRecords(ctx, repository.ListParams{Search: "pg summary", Limit: 10})
+	if err != nil {
+		t.Fatalf("list records: %v", err)
+	}
+	if len(recs) != len(items) {
+		t.Fatalf("records page = %d rows, summaries = %d", len(recs), len(items))
+	}
+	for i, rec := range recs {
+		if rec.ID != items[i].ID {
+			t.Fatalf("row %d: records %s, summaries %s — the pages disagree", i, rec.ID, items[i].ID)
+		}
+		if len(rec.ViewFlow.Nodes) != items[i].NodeCount {
+			t.Fatalf("row %d (%s): %d nodes in the record, nodeCount %d", i, rec.ID, len(rec.ViewFlow.Nodes), items[i].NodeCount)
+		}
+	}
+}
+
+// The derived plugin list, on a real server: the column round-trips through the
+// hand-written upsert and both selects, the save computes the list from the
+// graph instead of trusting the caller, and a list row carries it.
+func TestWorkflowPlugins(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+	flows := st.Workflows()
+
+	rec := &models.FlowRecord{
+		Title:   "pg plugins",
+		Plugins: []models.FlowPlugin{{Kind: models.KindExtension, PluginID: "not-in-this-graph"}},
+		ViewFlow: compiler.VueFlow{
+			Nodes: []compiler.VueFlowNode{
+				{ID: "start", Type: "startNode"},
+				{ID: "ask", Type: "llm", Data: map[string]any{"pluginId": "aaaa-bbbb-cccc-llm0"}},
+				{ID: "task", Type: "plugin", Data: map[string]any{"pluginId": "jira-local", "action": "jira.add_task"}},
+				{ID: "parked", Type: "http", Data: map[string]any{"pluginId": "aaaa-bbbb-cccc-http"}},
+			},
+			Edges: []compiler.Edges{
+				{ID: "e1", Source: "start", Target: "ask"},
+				{ID: "e2", Source: "ask", Target: "task"},
+			},
+		},
+	}
+	if err := flows.Upsert(ctx, rec); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	t.Cleanup(func() { _ = flows.Delete(ctx, rec.ID) })
+
+	want := []models.FlowPlugin{
+		{Kind: models.KindBuiltin, Type: models.ExtLLMType, PluginID: "aaaa-bbbb-cccc-llm0", NodeCount: 1},
+		{Kind: models.KindExtension, Type: models.ExtPluginBaseType, PluginID: "jira-local",
+			Actions: []string{"jira.add_task"}, NodeCount: 1},
+	}
+	if !reflect.DeepEqual(rec.Plugins, want) {
+		t.Fatalf("saved plugins = %+v, want %+v", rec.Plugins, want)
+	}
+	got, err := flows.GetByID(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if !reflect.DeepEqual(got.Plugins, want) {
+		t.Fatalf("stored plugins = %+v, want %+v", got.Plugins, want)
+	}
+	items, _, err := flows.List(ctx, repository.ListParams{Search: "pg plugins", Limit: 10})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(items) != 1 || !reflect.DeepEqual(items[0].Plugins, want) {
+		t.Fatalf("listed plugins = %+v, want %+v", items, want)
 	}
 }

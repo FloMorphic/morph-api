@@ -33,6 +33,11 @@ type savedFlow struct {
 // they are still looking at the canvas. A launch does refuse (see
 // inflow.StartWorkflow), so the two together mean "warned on save, stopped
 // before a run".
+//
+// The saved record also comes back with its `plugins` list — the plugins behind
+// the plugin-backed nodes the graph actually wires up, builtins tagged as such
+// (see models.CollectFlowPlugins). It is derived by the save, so whatever a
+// client sends under `plugins` is replaced by what the graph says.
 func (ctl *controller) upsert(c fiber.Ctx) error {
 	var input models.FlowRecord
 	if err := c.Bind().Body(&input); err != nil {
@@ -58,6 +63,14 @@ func (ctl *controller) upsert(c fiber.Ctx) error {
 }
 
 // list handles GET /flow — page-based listing with total count.
+//
+// A row is a models.FlowSummary, NOT the saved record: the flow's Vue Flow
+// graph is left out, and with it the bulk of the payload (a real flow's
+// `view_flow` is tens of kilobytes, so a page of 20 was megabytes of JSON for a
+// field no list draws — what made a consuming app's flow picker crawl). The
+// node count and the flow's plugin list ride along for the badges a list shows,
+// and the editor loads the graph of the one flow it opens with
+// GET /flow/id/:id.
 //
 // `tags` is an optional comma-separated match-ANY label filter: a flow is kept
 // when it carries at least one of them. It is what lets a consumer of this

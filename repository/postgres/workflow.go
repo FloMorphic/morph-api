@@ -22,16 +22,33 @@ import (
 //   - `ORDER BY updated_at DESC, id DESC` paging, matching the sqlite queries so
 //     a page holds the same rows on either backend.
 const (
-	workflowColumns = `id, title, view_flow, tags, preferences, created_at, updated_at`
+	workflowColumns = `id, title, view_flow, tags, preferences, plugins, created_at, updated_at`
+
+	// A list leaves view_flow out: a flow's graph is tens of kilobytes and no
+	// list renders it, so a page of records was megabytes read, decoded and
+	// sent for a field every caller threw away (see models.FlowSummary). What a
+	// list does show of the graph is its node count, counted here from the
+	// stored JSON — the subquery is the guard: jsonb_array_length raises on a
+	// value that is not an array, so a graph with no (or a non-array) `nodes`
+	// member yields no row and the COALESCE answers 0. NULLIF covers the empty
+	// text an un-migrated row could hold.
+	// `plugins` IS selected: it is the few entries derived from that graph on
+	// save (models.CollectFlowPlugins), which is what lets a list say which
+	// plugins a flow needs without reading one graph.
+	workflowSummaryColumns = `id, title, tags, preferences, plugins, created_at, updated_at,
+		 COALESCE((SELECT jsonb_array_length(g.j -> 'nodes')
+		             FROM (SELECT NULLIF(workflows.view_flow, '')::jsonb AS j) AS g
+		            WHERE jsonb_typeof(g.j -> 'nodes') = 'array'), 0) AS node_count`
 
 	workflowUpsertSQL = `
-INSERT INTO workflows (id, title, view_flow, tags, preferences, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO workflows (id, title, view_flow, tags, preferences, plugins, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (id) DO UPDATE SET
     title = EXCLUDED.title,
     view_flow = EXCLUDED.view_flow,
     tags = EXCLUDED.tags,
     preferences = EXCLUDED.preferences,
+    plugins = EXCLUDED.plugins,
     updated_at = EXCLUDED.updated_at`
 
 	// The tag predicate is a match-ANY membership test, the twin of the sqlite
@@ -78,6 +95,9 @@ func (r *workflowRepo) Upsert(ctx context.Context, w *models.FlowRecord) error {
 	w.UpdatedAt = now
 	w.Tags = models.NormalizeTags(w.Tags)
 	w.Preferences = w.Preferences.Normalize()
+	// Derived from the graph being saved, never taken from the caller — the
+	// sqlite twin says why.
+	w.Plugins = models.CollectFlowPlugins(w.ViewFlow)
 
 	viewFlow, err := json.Marshal(w.ViewFlow)
 	if err != nil {
@@ -87,8 +107,12 @@ func (r *workflowRepo) Upsert(ctx context.Context, w *models.FlowRecord) error {
 	if err != nil {
 		return fmt.Errorf("postgres: marshal preferences: %w", err)
 	}
+	plugins, err := marshalPlugins(w.Plugins)
+	if err != nil {
+		return fmt.Errorf("postgres: marshal plugins: %w", err)
+	}
 	_, err = r.db.ExecContext(ctx, workflowUpsertSQL,
-		w.ID, w.Title, string(viewFlow), marshalTags(w.Tags), preferences, w.CreatedAt, w.UpdatedAt)
+		w.ID, w.Title, string(viewFlow), marshalTags(w.Tags), preferences, plugins, w.CreatedAt, w.UpdatedAt)
 	return err
 }
 
@@ -97,7 +121,43 @@ func (r *workflowRepo) GetByID(ctx context.Context, id string) (*models.FlowReco
 	return scanWorkflow(row)
 }
 
-func (r *workflowRepo) List(ctx context.Context, p repository.ListParams) ([]models.FlowRecord, int64, error) {
+// List answers with summaries, not records: the graph is read by GetByID, for
+// the one flow that is actually opened (see repository.WorkflowRepository).
+func (r *workflowRepo) List(ctx context.Context, p repository.ListParams) ([]models.FlowSummary, int64, error) {
+	limit := clampLimit(p.Limit)
+	tags := repository.TagFilter(p.Tags)
+	var total int64
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM workflows WHERE `+workflowFilterSQL, p.Search, tags).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+workflowSummaryColumns+` FROM workflows WHERE `+workflowFilterSQL+`
+		 ORDER BY updated_at DESC, id DESC LIMIT $3 OFFSET $4`,
+		p.Search, tags, limit, p.Offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]models.FlowSummary, 0, limit)
+	for rows.Next() {
+		sum, err := scanWorkflowSummary(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, *sum)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+// ListRecords is List's twin for the caller that wants the graphs (see
+// repository.WorkflowRepository): the same page and count, selecting the record
+// columns — view_flow among them — instead of the summary ones.
+func (r *workflowRepo) ListRecords(ctx context.Context, p repository.ListParams) ([]models.FlowRecord, int64, error) {
 	limit := clampLimit(p.Limit)
 	tags := repository.TagFilter(p.Tags)
 	var total int64
@@ -138,8 +198,9 @@ func scanWorkflow(row scanner) (*models.FlowRecord, error) {
 		viewFlow    string
 		tags        string
 		preferences string
+		plugins     string
 	)
-	if err := row.Scan(&rec.ID, &rec.Title, &viewFlow, &tags, &preferences, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
+	if err := row.Scan(&rec.ID, &rec.Title, &viewFlow, &tags, &preferences, &plugins, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
 		return nil, notFound(err)
 	}
 	rec.Tags = unmarshalTags(tags)
@@ -148,12 +209,35 @@ func scanWorkflow(row scanner) (*models.FlowRecord, error) {
 		return nil, fmt.Errorf("postgres: unmarshal preferences for %s: %w", rec.ID, err)
 	}
 	rec.Preferences = prefs
+	rec.Plugins = unmarshalPlugins(plugins)
 	if viewFlow != "" {
 		if err := json.Unmarshal([]byte(viewFlow), &rec.ViewFlow); err != nil {
 			return nil, fmt.Errorf("postgres: unmarshal view_flow for %s: %w", rec.ID, err)
 		}
 	}
 	return &rec, nil
+}
+
+// scanWorkflowSummary maps one list row — the record's columns minus the graph,
+// plus the node count the query derived from it.
+func scanWorkflowSummary(row scanner) (*models.FlowSummary, error) {
+	var (
+		sum         models.FlowSummary
+		tags        string
+		preferences string
+		plugins     string
+	)
+	if err := row.Scan(&sum.ID, &sum.Title, &tags, &preferences, &plugins, &sum.CreatedAt, &sum.UpdatedAt, &sum.NodeCount); err != nil {
+		return nil, notFound(err)
+	}
+	sum.Tags = unmarshalTags(tags)
+	prefs, err := unmarshalPreferences(preferences)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: unmarshal preferences for %s: %w", sum.ID, err)
+	}
+	sum.Preferences = prefs
+	sum.Plugins = unmarshalPlugins(plugins)
+	return &sum, nil
 }
 
 // scanner is the bit of *sql.Row and *sql.Rows a row-mapper needs, so one
@@ -235,6 +319,33 @@ func unmarshalPreferences(s string) (*models.FlowPreferences, error) {
 	return &p, nil
 }
 
+// marshalPlugins / unmarshalPlugins are the postgres twins of the sqlite pair:
+// "no plugins" is the NOT NULL column's `[]`, and a read tolerates both that
+// and the empty text a row written before the column existed holds. An
+// undecodable list reads as none rather than failing the read — it is derived
+// data the next save rebuilds from the graph.
+func marshalPlugins(p []models.FlowPlugin) (string, error) {
+	if len(p) == 0 {
+		return "[]", nil
+	}
+	b, err := json.Marshal(p)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func unmarshalPlugins(s string) []models.FlowPlugin {
+	if s == "" || s == "[]" || s == "null" {
+		return nil
+	}
+	var out []models.FlowPlugin
+	if json.Unmarshal([]byte(s), &out) != nil || len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // marshalObject renders a free-form object column, defaulting a nil map to "{}"
 // so a NOT NULL text column always holds valid JSON.
 func marshalObject(m map[string]any) (string, error) {
@@ -255,4 +366,51 @@ func unmarshalObject(s string, dst *map[string]any) error {
 		return nil
 	}
 	return json.Unmarshal([]byte(s), dst)
+}
+
+// backfillWorkflowPlugins derives the plugin list of the flows saved before the
+// column existed, and reports how many it filled. The sqlite twin explains the
+// sentinel (the empty text an existing row carries) and why the rows are
+// collected before they are written.
+func backfillWorkflowPlugins(ctx context.Context, db *sql.DB) (int, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id, view_flow FROM workflows WHERE plugins = ''`)
+	if err != nil {
+		return 0, err
+	}
+	type pending struct{ id, plugins string }
+	var todo []pending
+	for rows.Next() {
+		var id, viewFlow string
+		if err := rows.Scan(&id, &viewFlow); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		var rec models.FlowRecord
+		if viewFlow != "" {
+			if err := json.Unmarshal([]byte(viewFlow), &rec.ViewFlow); err != nil {
+				todo = append(todo, pending{id: id, plugins: "[]"})
+				continue
+			}
+		}
+		plugins, err := marshalPlugins(models.CollectFlowPlugins(rec.ViewFlow))
+		if err != nil {
+			rows.Close()
+			return 0, err
+		}
+		todo = append(todo, pending{id: id, plugins: plugins})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	for _, p := range todo {
+		// updated_at untouched: deriving a field is not a change to the flow.
+		if _, err := db.ExecContext(ctx,
+			`UPDATE workflows SET plugins = $1 WHERE id = $2`, p.plugins, p.id); err != nil {
+			return 0, err
+		}
+	}
+	return len(todo), nil
 }

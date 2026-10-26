@@ -67,10 +67,21 @@ type Querier interface {
 	ListPrompts(ctx context.Context, arg ListPromptsParams) ([]Prompt, error)
 	ListTelegramRecipients(ctx context.Context, arg ListTelegramRecipientsParams) ([]TelegramRecipient, error)
 	ListTriggers(ctx context.Context, arg ListTriggersParams) ([]Trigger, error)
+	ListWorkflowRecords(ctx context.Context, arg ListWorkflowRecordsParams) ([]Workflow, error)
 	// The tag predicate is a match-ANY membership test: @tags is the filter as
 	// ",a,b," (repository.TagFilter) and json_each walks the row's own array, so
 	// `instr` of ",<tag>," is an exact element match. '' means "no filter".
-	ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]Workflow, error)
+	// A list never renders the graph, so view_flow is NOT selected: a flow's graph
+	// is tens of kilobytes, and a page of them was megabytes read, decoded and
+	// sent for a field no caller looked at (see models.FlowSummary). What a list
+	// does show of the graph is how many nodes it has, so that is counted here
+	// instead: json_valid guards the empty text an un-migrated row could hold, and
+	// the COALESCE covers a graph with no "nodes" member.
+	//
+	// `plugins` IS selected: it is the handful of plugin entries derived from that
+	// graph on save (models.CollectFlowPlugins), which is precisely what a list can
+	// show about a flow's plugins without reading one graph.
+	ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]ListWorkflowsRow, error)
 	SetConnectDefault(ctx context.Context, arg SetConnectDefaultParams) (int64, error)
 	UpdateProcess(ctx context.Context, arg UpdateProcessParams) (int64, error)
 	UpdateTriggerState(ctx context.Context, arg UpdateTriggerStateParams) error

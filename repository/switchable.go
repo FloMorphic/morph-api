@@ -34,7 +34,7 @@ type Switchable struct {
 	hooksMu sync.Mutex
 	hooks   []func()
 
-	workflows    *crudFwd[models.FlowRecord]
+	workflows    *workflowFwd
 	contexts     *crudFwd[models.ContextRecord]
 	nodeSettings *crudFwd[models.NodeSetting]
 	prompts      *promptFwd
@@ -55,7 +55,7 @@ func NewSwitchable(cfg Config, st Store) *Switchable {
 	normalized := cfg.Normalized()
 	s.cfg.Store(&normalized)
 
-	s.workflows = &crudFwd[models.FlowRecord]{s: s, pick: func(st Store) CRUD[models.FlowRecord] { return st.Workflows() }}
+	s.workflows = &workflowFwd{s: s}
 	s.contexts = &crudFwd[models.ContextRecord]{s: s, pick: func(st Store) CRUD[models.ContextRecord] { return st.Contexts() }}
 	s.nodeSettings = &crudFwd[models.NodeSetting]{s: s, pick: func(st Store) CRUD[models.NodeSetting] { return st.NodeSettings() }}
 	s.prompts = &promptFwd{crudFwd[models.PromptRecord]{s: s, pick: func(st Store) CRUD[models.PromptRecord] { return st.Prompts() }}}
@@ -176,6 +176,27 @@ func (f *crudFwd[T]) List(ctx context.Context, p ListParams) ([]T, int64, error)
 	return f.repo().List(ctx, p)
 }
 func (f *crudFwd[T]) Delete(ctx context.Context, id string) error { return f.repo().Delete(ctx, id) }
+
+// workflowFwd forwards the workflow repository. It is hand-written rather than
+// a crudFwd because a flow is listed as a summary, not as the record it is
+// written and read as (see WorkflowRepository).
+type workflowFwd struct{ s *Switchable }
+
+func (f *workflowFwd) repo() WorkflowRepository { return f.s.live().Workflows() }
+
+func (f *workflowFwd) Upsert(ctx context.Context, w *models.FlowRecord) error {
+	return f.repo().Upsert(ctx, w)
+}
+func (f *workflowFwd) GetByID(ctx context.Context, id string) (*models.FlowRecord, error) {
+	return f.repo().GetByID(ctx, id)
+}
+func (f *workflowFwd) List(ctx context.Context, p ListParams) ([]models.FlowSummary, int64, error) {
+	return f.repo().List(ctx, p)
+}
+func (f *workflowFwd) ListRecords(ctx context.Context, p ListParams) ([]models.FlowRecord, int64, error) {
+	return f.repo().ListRecords(ctx, p)
+}
+func (f *workflowFwd) Delete(ctx context.Context, id string) error { return f.repo().Delete(ctx, id) }
 
 // promptFwd adds the prompt repository's seeding method to the CRUD forwarder.
 type promptFwd struct{ crudFwd[models.PromptRecord] }

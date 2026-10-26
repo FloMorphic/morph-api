@@ -21,6 +21,15 @@ CREATE TABLE IF NOT EXISTS workflows (
     -- rides with the row rather than in a side table: it is read whole with the
     -- flow, always, and never queried by its contents.
     preferences TEXT   NOT NULL DEFAULT '{}',
+    -- The plugins the flow's wired-up plugin-backed nodes run through, a JSON
+    -- array derived from the graph on every save (models.CollectFlowPlugins).
+    -- Denormalized on purpose: it is what a flow LIST shows about the plugins a
+    -- flow needs, and the list does not read view_flow (see models.FlowSummary),
+    -- so deriving it per row would mean loading every graph on the page.
+    -- '' is the sentinel for a row whose list has never been derived (one
+    -- written before the column existed); a flow that needs no plugin stores
+    -- '[]'. See backfillWorkflowPlugins.
+    plugins    TEXT    NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );

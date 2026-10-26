@@ -117,6 +117,15 @@ func Open(source string) (repository.Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite: apply migrations: %w", err)
 	}
+	// Derive the plugin list of the flows saved before the column existed, so
+	// an install's existing flows answer "which plugins does this need" without
+	// each one having to be opened and re-saved first. Best-effort: it is
+	// derived data every save rebuilds, and not worth refusing to boot over.
+	if n, err := backfillWorkflowPlugins(context.Background(), db); err != nil {
+		fmt.Printf("warning: deriving flow plugin lists: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("derived the plugin list of %d flow(s)\n", n)
+	}
 	vecVersion, err := newVectorIndex(db).Version(context.Background())
 	if err != nil {
 		_ = db.Close()
@@ -195,6 +204,11 @@ func applyMigrations(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE connect_connections ADD COLUMN admin_token TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE workflows ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE workflows ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'`,
+		// Default '' rather than '[]': an existing row gets the empty text, which
+		// is the sentinel "this flow's plugin list has never been derived" that
+		// the one-time backfill looks for (see backfillWorkflowPlugins). A
+		// derived-and-empty list is stored as '[]'.
+		`ALTER TABLE workflows ADD COLUMN plugins TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, stmt := range migrations {
 		if _, err := db.ExecContext(ctx, stmt); err != nil {

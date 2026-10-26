@@ -257,6 +257,12 @@ func Import(ctx context.Context, store repository.Store, in Input) (*Result, err
 
 	rec := models.FlowRecord{ID: strings.TrimSpace(in.ID), Title: title, Tags: tags, Preferences: prefs.Normalize(), ViewFlow: graph}
 	inflow.NormalizeGraph(&rec)
+	// The plugin list the save would derive (the repository's Upsert owns it and
+	// recomputes exactly this), filled here so a DRY RUN reports it too: "which
+	// plugins does landing this document commit me to running" is one of the
+	// questions a dry run is asked, and the nodes have just been stamped with
+	// this install's identities, so the answer is only knowable now.
+	rec.Plugins = models.CollectFlowPlugins(rec.ViewFlow)
 
 	res := &Result{Problems: problems, MissingActions: missing, UnboundNodes: unbound, DryRun: in.DryRun}
 	// Guarded, because landing a document is a save of a flow: the findings are

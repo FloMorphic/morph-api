@@ -42,7 +42,7 @@ func (q *Queries) DeleteWorkflow(ctx context.Context, id string) (int64, error) 
 }
 
 const getWorkflow = `-- name: GetWorkflow :one
-SELECT id, title, view_flow, tags, preferences, created_at, updated_at FROM workflows WHERE id = ?1
+SELECT id, title, view_flow, tags, preferences, plugins, created_at, updated_at FROM workflows WHERE id = ?1
 `
 
 func (q *Queries) GetWorkflow(ctx context.Context, id string) (Workflow, error) {
@@ -54,15 +54,15 @@ func (q *Queries) GetWorkflow(ctx context.Context, id string) (Workflow, error) 
 		&i.ViewFlow,
 		&i.Tags,
 		&i.Preferences,
+		&i.Plugins,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const listWorkflows = `-- name: ListWorkflows :many
-
-SELECT id, title, view_flow, tags, preferences, created_at, updated_at FROM workflows
+const listWorkflowRecords = `-- name: ListWorkflowRecords :many
+SELECT id, title, view_flow, tags, preferences, plugins, created_at, updated_at FROM workflows
 WHERE (?1 = '' OR title LIKE '%' || ?1 || '%')
   AND (?2 = '' OR EXISTS (
         SELECT 1 FROM json_each(workflows.tags) AS tag
@@ -71,18 +71,15 @@ ORDER BY updated_at DESC, id DESC
 LIMIT ?4 OFFSET ?3
 `
 
-type ListWorkflowsParams struct {
+type ListWorkflowRecordsParams struct {
 	Search interface{}
 	Tags   interface{}
 	Offset int64
 	Limit  int64
 }
 
-// The tag predicate is a match-ANY membership test: @tags is the filter as
-// ",a,b," (repository.TagFilter) and json_each walks the row's own array, so
-// `instr` of ",<tag>," is an exact element match. ” means "no filter".
-func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]Workflow, error) {
-	rows, err := q.db.QueryContext(ctx, listWorkflows,
+func (q *Queries) ListWorkflowRecords(ctx context.Context, arg ListWorkflowRecordsParams) ([]Workflow, error) {
+	rows, err := q.db.QueryContext(ctx, listWorkflowRecords,
 		arg.Search,
 		arg.Tags,
 		arg.Offset,
@@ -101,6 +98,7 @@ func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([
 			&i.ViewFlow,
 			&i.Tags,
 			&i.Preferences,
+			&i.Plugins,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -117,14 +115,99 @@ func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([
 	return items, nil
 }
 
+const listWorkflows = `-- name: ListWorkflows :many
+
+
+SELECT id, title, tags, preferences, plugins, created_at, updated_at,
+       CAST(CASE WHEN json_valid(view_flow)
+                 THEN COALESCE(json_array_length(view_flow, '$.nodes'), 0)
+                 ELSE 0 END AS INTEGER) AS node_count
+FROM workflows
+WHERE (?1 = '' OR title LIKE '%' || ?1 || '%')
+  AND (?2 = '' OR EXISTS (
+        SELECT 1 FROM json_each(workflows.tags) AS tag
+        WHERE instr(?2, ',' || tag.value || ',') > 0))
+ORDER BY updated_at DESC, id DESC
+LIMIT ?4 OFFSET ?3
+`
+
+type ListWorkflowsParams struct {
+	Search interface{}
+	Tags   interface{}
+	Offset int64
+	Limit  int64
+}
+
+type ListWorkflowsRow struct {
+	ID          string
+	Title       string
+	Tags        string
+	Preferences string
+	Plugins     string
+	CreatedAt   int64
+	UpdatedAt   int64
+	NodeCount   int64
+}
+
+// The tag predicate is a match-ANY membership test: @tags is the filter as
+// ",a,b," (repository.TagFilter) and json_each walks the row's own array, so
+// `instr` of ",<tag>," is an exact element match. ” means "no filter".
+// A list never renders the graph, so view_flow is NOT selected: a flow's graph
+// is tens of kilobytes, and a page of them was megabytes read, decoded and
+// sent for a field no caller looked at (see models.FlowSummary). What a list
+// does show of the graph is how many nodes it has, so that is counted here
+// instead: json_valid guards the empty text an un-migrated row could hold, and
+// the COALESCE covers a graph with no "nodes" member.
+//
+// `plugins` IS selected: it is the handful of plugin entries derived from that
+// graph on save (models.CollectFlowPlugins), which is precisely what a list can
+// show about a flow's plugins without reading one graph.
+func (q *Queries) ListWorkflows(ctx context.Context, arg ListWorkflowsParams) ([]ListWorkflowsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listWorkflows,
+		arg.Search,
+		arg.Tags,
+		arg.Offset,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWorkflowsRow{}
+	for rows.Next() {
+		var i ListWorkflowsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Title,
+			&i.Tags,
+			&i.Preferences,
+			&i.Plugins,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.NodeCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertWorkflow = `-- name: UpsertWorkflow :exec
-INSERT INTO workflows (id, title, view_flow, tags, preferences, created_at, updated_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+INSERT INTO workflows (id, title, view_flow, tags, preferences, plugins, created_at, updated_at)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
 ON CONFLICT(id) DO UPDATE SET
     title = excluded.title,
     view_flow = excluded.view_flow,
     tags = excluded.tags,
     preferences = excluded.preferences,
+    plugins = excluded.plugins,
     updated_at = excluded.updated_at
 `
 
@@ -134,6 +217,7 @@ type UpsertWorkflowParams struct {
 	ViewFlow    string
 	Tags        string
 	Preferences string
+	Plugins     string
 	CreatedAt   int64
 	UpdatedAt   int64
 }
@@ -145,6 +229,7 @@ func (q *Queries) UpsertWorkflow(ctx context.Context, arg UpsertWorkflowParams) 
 		arg.ViewFlow,
 		arg.Tags,
 		arg.Preferences,
+		arg.Plugins,
 		arg.CreatedAt,
 		arg.UpdatedAt,
 	)
