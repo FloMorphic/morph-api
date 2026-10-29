@@ -9,6 +9,7 @@ import (
 	"github.com/FloMorphic/morph-api/etc"
 	"github.com/FloMorphic/morph-api/models"
 	fuse "github.com/Inflowenger/inflow-fusion/inflow"
+	InfraModels "github.com/Inflowenger/inflow-fusion/models"
 	InfraSpaces "github.com/Inflowenger/inflow-fusion/spaces"
 	"github.com/gofiber/fiber/v3"
 	"github.com/nats-io/nkeys"
@@ -90,28 +91,48 @@ func mintCred(input models.CredRequest) (string, error) {
 	}
 	pub, _ := kp.PublicKey()
 
-	perm,err := InfraSpaces.PluginCredentialStrictPermission(input.Name, input.PluginId, pub)
-	if err!=nil{
-		return "",err
-	}
-	if input.Access == models.MultiPluginAccess {
-		// Open credentials leave Pub/Sub allow-lists empty, which NATS reads as
-		// "allow all". Adding a single publish subject would flip that to
-		// "allow ONLY that subject" — stripping the plugin of its ability to
-		// respond on _INBOX.> and breaking every builtin node. So leave the open
-		// credential untouched: it can already reach flomorphic.svc.>.
-		perm = InfraSpaces.PluginCredentialOpenPermission(input.Name, pub)
-	} else {
-		// Strict credentials enumerate their publish subjects, so the svc reach
-		// (OC proxy / svc handlers) must be added explicitly alongside the
-		// plugin's own subjects and _INBOX.>.
-		perm.Pub.Allow.Add("flomorphic.svc.>")
+	perm, err := credPermission(input, pub)
+	if err != nil {
+		return "", err
 	}
 	ucred, err := InfraSpaces.CreateUserCredential(spaceSeed, perm)
 	if err != nil {
 		return "", errors.New("error occurred in create access token")
 	}
 	return ucred.Base64Cred, nil
+}
+
+// credPermission builds the permission set the requested access level grants,
+// against the account the credential will be signed on.
+//
+// Split out of mintCred because it is the one part of minting that needs no
+// infra: the account lookup above does, so this is where the strict/open
+// distinction can be tested.
+func credPermission(input models.CredRequest, accountPub string) (InfraModels.UserCredGenInput, error) {
+	// Open credentials leave Pub/Sub allow-lists empty, which NATS reads as
+	// "allow all". Adding a single publish subject would flip that to
+	// "allow ONLY that subject" — stripping the plugin of its ability to
+	// respond on _INBOX.> and breaking every builtin node. So leave the open
+	// credential untouched: it can already reach flomorphic.svc.>.
+	//
+	// It is also the only credential an open request can build: a multi request
+	// carries no pluginId, and the strict permission needs one it can place in a
+	// subject, so that builder must stay behind the strict branch rather than
+	// run for both.
+	if input.Access != models.StrictAccess {
+		return InfraSpaces.PluginCredentialOpenPermission(input.Name, accountPub), nil
+	}
+	perm, err := InfraSpaces.PluginCredentialStrictPermission(input.Name, input.PluginId, accountPub)
+	if err != nil {
+		// An unusable pluginId is request input, not broken infra: it comes
+		// straight off the body, so answer 400 rather than 500.
+		return InfraModels.UserCredGenInput{}, fmt.Errorf("%w: %w", errBadCredRequest, err)
+	}
+	// Strict credentials enumerate their publish subjects, so the svc reach
+	// (OC proxy / svc handlers) must be added explicitly alongside the plugin's
+	// own subjects and _INBOX.>.
+	perm.Pub.Allow.Add("flomorphic.svc.>")
+	return perm, nil
 }
 
 // credError maps a mintCred failure to its HTTP status: a caller mistake is a
